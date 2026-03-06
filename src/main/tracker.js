@@ -2,9 +2,10 @@ const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
 
+const DATA_VERSION = 2;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
-const BROWSER_EVENT_TTL_MS = 20000;
+const BROWSER_EVENT_TTL_MS = 65000;
 const LOOPBACK_HOST = '127.0.0.1';
 const LOOPBACK_PORT = 32123;
 let activeWinLoader = null;
@@ -208,12 +209,229 @@ class BrowserEventCache {
   }
 }
 
+function createEmptyData() {
+  return { version: DATA_VERSION, days: {} };
+}
+
+function cloneStoredItem(item) {
+  return {
+    ...item,
+    hourly: ensureArray24(item.hourly),
+    totalMs: Number(item.totalMs) || 0,
+    lastSeenAt: Number(item.lastSeenAt) || 0
+  };
+}
+
+function isBrowserUsageItem(item) {
+  if (!item) {
+    return false;
+  }
+
+  if (item.kind === 'page' || item.kind === 'site') {
+    return true;
+  }
+
+  return Boolean(item.browserFamily || isBrowserApp(item.appName || item.label || ''));
+}
+
+function hasWebsiteMetadata(item) {
+  return Boolean(sanitizeText(item.host) || sanitizeText(item.url) || sanitizeText(item.pageTitle));
+}
+
+function buildSiteEntry(item, inferredHost = '') {
+  const normalizedUrl = normalizeUrl(item.url || '');
+  const rawHost = sanitizeText(inferredHost || item.host || normalizedUrl?.hostname || '');
+  const rootDomain = getRootDomain(rawHost);
+  if (!rootDomain) {
+    return null;
+  }
+
+  const key = `site:${hashString(rootDomain)}`;
+  const pageTitle = sanitizeText(item.pageTitle || item.label || item.subtitle || '');
+  return {
+    key,
+    kind: 'site',
+    label: getDomainDisplayName(rootDomain),
+    subtitle: pageTitle || rootDomain,
+    appName: sanitizeText(item.appName, item.label || 'Browser'),
+    browserFamily: sanitizeText(item.browserFamily, getBrowserFamily(item.appName || item.label || '') || ''),
+    pageTitle,
+    windowTitle: sanitizeText(item.windowTitle, pageTitle || item.subtitle || rootDomain),
+    url: sanitizeText(item.url),
+    host: rootDomain,
+    path: sanitizeText(item.path, normalizedUrl?.pathname || '/'),
+    executablePath: sanitizeText(item.executablePath),
+    totalMs: Number(item.totalMs) || 0,
+    hourly: ensureArray24(item.hourly),
+    color: getColorFromKey(key),
+    lastSeenAt: Number(item.lastSeenAt) || 0
+  };
+}
+
+function mergeStoredItems(target, source) {
+  target.totalMs += Number(source.totalMs) || 0;
+  target.hourly = target.hourly.map((value, index) => value + ((source.hourly && source.hourly[index]) || 0));
+
+  const sourceSeenAt = Number(source.lastSeenAt) || 0;
+  const targetSeenAt = Number(target.lastSeenAt) || 0;
+  if (sourceSeenAt >= targetSeenAt) {
+    target.label = source.label || target.label;
+    target.subtitle = source.subtitle || target.subtitle;
+    target.appName = source.appName || target.appName;
+    target.browserFamily = source.browserFamily || target.browserFamily;
+    target.pageTitle = source.pageTitle || target.pageTitle;
+    target.windowTitle = source.windowTitle || target.windowTitle;
+    target.url = source.url || target.url;
+    target.host = source.host || target.host;
+    target.path = source.path || target.path;
+    target.executablePath = source.executablePath || target.executablePath;
+    target.lastSeenAt = sourceSeenAt;
+  }
+}
+
+function mergeIntoMap(map, item) {
+  const existing = map[item.key];
+  if (!existing) {
+    map[item.key] = cloneStoredItem(item);
+    return;
+  }
+
+  mergeStoredItems(existing, item);
+}
+
+function inferSiteHostFromTitle(item, siteCandidates) {
+  const title = sanitizeText(item.windowTitle || item.subtitle || '').toLowerCase();
+  if (!title || !siteCandidates.length) {
+    return '';
+  }
+
+  let bestCandidate = null;
+  let bestScore = 0;
+
+  for (const candidate of siteCandidates) {
+    const rootDomain = sanitizeText(candidate.host).toLowerCase();
+    const displayName = getDomainDisplayName(rootDomain).toLowerCase();
+    const aliases = [rootDomain, displayName, sanitizeText(candidate.label).toLowerCase()].filter(Boolean);
+    let score = 0;
+
+    for (const alias of aliases) {
+      if (!alias) {
+        continue;
+      }
+
+      if (title.includes(alias)) {
+        score = Math.max(score, alias === rootDomain ? 3 : 2);
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = candidate;
+    }
+  }
+
+  return bestCandidate ? bestCandidate.host : '';
+}
+
+function migrateDay(day) {
+  const sourceItems = Object.values(day?.items || {}).map((item) => cloneStoredItem(item));
+  const nextItems = {};
+  let changed = false;
+
+  for (const item of sourceItems) {
+    if (isBrowserUsageItem(item) && hasWebsiteMetadata(item)) {
+      const siteItem = buildSiteEntry(item);
+      if (siteItem) {
+        mergeIntoMap(nextItems, siteItem);
+        if (item.key !== siteItem.key || item.kind !== 'site' || item.host !== siteItem.host || item.label !== siteItem.label) {
+          changed = true;
+        }
+        continue;
+      }
+    }
+
+    mergeIntoMap(nextItems, item);
+  }
+
+  const siteCandidates = Object.values(nextItems).filter((item) => item.kind === 'site');
+  for (const item of Object.values(nextItems)) {
+    if (!isBrowserUsageItem(item) || item.kind !== 'app' || hasWebsiteMetadata(item)) {
+      continue;
+    }
+
+    const inferredHost = inferSiteHostFromTitle(item, siteCandidates.filter((candidate) => {
+      if (item.browserFamily && candidate.browserFamily) {
+        return item.browserFamily === candidate.browserFamily;
+      }
+
+      return true;
+    }));
+
+    if (!inferredHost) {
+      continue;
+    }
+
+    const siteItem = buildSiteEntry(item, inferredHost);
+    if (!siteItem) {
+      continue;
+    }
+
+    delete nextItems[item.key];
+    mergeIntoMap(nextItems, siteItem);
+    changed = true;
+  }
+
+  const totalMs = Object.values(nextItems).reduce((sum, item) => sum + (Number(item.totalMs) || 0), 0);
+  if ((Number(day?.totalMs) || 0) !== totalMs) {
+    changed = true;
+  }
+
+  return {
+    totalMs,
+    items: nextItems,
+    changed
+  };
+}
+
+function migrateUsageData(rawData) {
+  const parsed = rawData && typeof rawData === 'object' ? rawData : {};
+  const result = createEmptyData();
+  let changed = Number(parsed.version) !== DATA_VERSION;
+
+  for (const [dayKey, day] of Object.entries(parsed.days || {})) {
+    const migratedDay = migrateDay(day);
+    result.days[dayKey] = {
+      totalMs: migratedDay.totalMs,
+      items: migratedDay.items
+    };
+    changed ||= migratedDay.changed;
+  }
+
+  return { data: result, changed };
+}
+
+async function migrateUsageDataFile(filePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
+  } catch {
+    return { data: createEmptyData(), changed: false };
+  }
+
+  const migrated = migrateUsageData(parsed);
+  if (migrated.changed) {
+    await fs.writeFile(filePath, JSON.stringify(migrated.data, null, 2), 'utf8');
+  }
+
+  return migrated;
+}
+
 class UsageTracker {
   constructor({ userDataPath, onDataChanged }) {
     this.userDataPath = userDataPath;
     this.onDataChanged = onDataChanged;
     this.dataFilePath = path.join(userDataPath, 'usage-data.json');
-    this.data = { version: 1, days: {} };
+    this.data = createEmptyData();
     this.currentEntry = null;
     this.timer = null;
     this.saveTimer = null;
@@ -249,26 +467,13 @@ class UsageTracker {
     try {
       const fileContent = await fs.readFile(this.dataFilePath, 'utf8');
       const parsed = JSON.parse(fileContent);
-      this.data = {
-        version: 1,
-        days: Object.fromEntries(
-          Object.entries(parsed.days || {}).map(([dayKey, day]) => {
-            const items = Object.fromEntries(
-              Object.entries(day.items || {}).map(([itemKey, item]) => [
-                itemKey,
-                {
-                  ...item,
-                  hourly: ensureArray24(item.hourly)
-                }
-              ])
-            );
-
-            return [dayKey, { ...day, items }];
-          })
-        )
-      };
+      const migrated = migrateUsageData(parsed);
+      this.data = migrated.data;
+      if (migrated.changed) {
+        await this.save();
+      }
     } catch {
-      this.data = { version: 1, days: {} };
+      this.data = createEmptyData();
     }
   }
 
@@ -628,6 +833,8 @@ class UsageTracker {
 
 module.exports = {
   UsageTracker,
+  migrateUsageData,
+  migrateUsageDataFile,
   LOOPBACK_PORT,
   LOOPBACK_HOST
 };
