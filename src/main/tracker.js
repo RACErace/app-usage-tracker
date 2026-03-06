@@ -17,6 +17,23 @@ const BROWSER_APP_PATTERNS = [
   { family: 'Firefox', names: ['firefox'] }
 ];
 
+const MULTI_PART_TLDS = new Set([
+  'com.cn',
+  'net.cn',
+  'org.cn',
+  'gov.cn',
+  'edu.cn',
+  'co.uk',
+  'org.uk',
+  'gov.uk',
+  'com.au',
+  'net.au',
+  'org.au',
+  'co.jp',
+  'com.hk',
+  'com.tw'
+]);
+
 function getDayKey(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -71,6 +88,43 @@ function normalizeUrl(rawUrl) {
   } catch {
     return null;
   }
+}
+
+function isIpHost(hostname) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
+}
+
+function getRootDomain(hostname) {
+  const normalized = sanitizeText(hostname).toLowerCase().replace(/\.$/, '');
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'localhost' || isIpHost(normalized)) {
+    return normalized;
+  }
+
+  const segments = normalized.split('.').filter(Boolean);
+  if (segments.length <= 2) {
+    return normalized;
+  }
+
+  const suffix = segments.slice(-2).join('.');
+  if (MULTI_PART_TLDS.has(suffix) && segments.length >= 3) {
+    return segments.slice(-3).join('.');
+  }
+
+  return segments.slice(-2).join('.');
+}
+
+function getDomainDisplayName(hostname) {
+  const rootDomain = getRootDomain(hostname);
+  if (!rootDomain) {
+    return '网页';
+  }
+
+  const [firstLabel] = rootDomain.split('.');
+  return sanitizeText(firstLabel, rootDomain).toLowerCase();
 }
 
 function getBrowserFamily(appName) {
@@ -131,6 +185,8 @@ class BrowserEventCache {
       pageTitle: sanitizeText(payload.pageTitle, normalizedUrl.hostname),
       url: normalizedUrl.toString(),
       host: normalizedUrl.hostname,
+      rootDomain: getRootDomain(normalizedUrl.hostname),
+      displayName: getDomainDisplayName(normalizedUrl.hostname),
       path: normalizedUrl.pathname || '/',
       receivedAt: Date.now()
     });
@@ -305,19 +361,20 @@ class UsageTracker {
     if (browserFamily) {
       const browserEvent = this.browserEvents.getFresh(browserFamily);
       if (browserEvent) {
-        const pageKey = `page:${toIdSegment(browserFamily)}:${hashString(browserEvent.url)}`;
+        const groupedDomain = browserEvent.rootDomain || browserEvent.host;
+        const pageKey = `site:${hashString(groupedDomain)}`;
         return {
           key: pageKey,
-          kind: 'page',
+          kind: 'site',
           appName,
           browserFamily,
           pageTitle: browserEvent.pageTitle,
           windowTitle,
           url: browserEvent.url,
-          host: browserEvent.host,
+          host: groupedDomain,
           path: browserEvent.path,
-          label: browserEvent.pageTitle || browserEvent.host,
-          subtitle: browserEvent.host,
+          label: browserEvent.displayName || groupedDomain,
+          subtitle: browserEvent.pageTitle || groupedDomain,
           color: getColorFromKey(pageKey),
           startedAt: now,
           lastSeenAt: now,
@@ -481,6 +538,9 @@ class UsageTracker {
           existing.label = item.label;
           existing.subtitle = item.subtitle;
           existing.url = item.url || existing.url;
+          existing.host = item.host || existing.host;
+          existing.pageTitle = item.pageTitle || existing.pageTitle;
+          existing.appName = item.appName || existing.appName;
         }
       }
     }

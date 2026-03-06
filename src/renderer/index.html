@@ -9,11 +9,11 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <button class="icon-button back-button" type="button" aria-label="返回">‹</button>
-        <div>
+        <button class="icon-button back-button inactive" type="button" id="back-button" aria-label="返回">‹</button>
+        <div class="title-block">
           <h1 class="screen-title" id="screen-title">使用统计</h1>
         </div>
-        <button class="text-button" type="button" id="device-button">设备</button>
+        <button class="text-button" type="button" id="settings-button">设置</button>
       </header>
 
       <main class="content-area">
@@ -29,61 +29,61 @@
             <button class="pill-button" type="button" id="next-day">›</button>
           </section>
 
-          <section class="section-block">
-            <div class="section-title-row">
-              <h2 class="section-title" id="chart-section-title">使用时长（截至今天）</h2>
-            </div>
+          <div class="overview-grid">
+            <section class="section-block chart-section">
+              <div class="section-title-row">
+                <h2 class="section-title" id="chart-section-title">使用时长（截至今天）</h2>
+              </div>
 
-            <article class="card chart-card">
-              <div class="card-header">
-                <div>
-                  <div class="big-metric" id="summary-duration">0 分钟</div>
-                  <div class="sub-metric" id="summary-subtitle"></div>
+              <article class="card chart-card">
+                <div class="card-header">
+                  <div>
+                    <div class="big-metric" id="summary-duration">0 分钟</div>
+                    <div class="sub-metric" id="summary-subtitle"></div>
+                  </div>
+                  <button class="icon-button info-button" type="button" id="refresh-button" aria-label="刷新">i</button>
                 </div>
-                <button class="icon-button info-button" type="button" id="refresh-button" aria-label="刷新">i</button>
+
+                <div class="chart-wrap">
+                  <canvas id="usage-chart" width="340" height="240"></canvas>
+                  <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+                </div>
+
+                <div class="chart-legend" id="chart-legend">
+                  <span class="legend-dot"></span>
+                  <span class="legend-label">当前设备</span>
+                </div>
+              </article>
+            </section>
+
+            <section class="section-block ranking-section">
+              <div class="section-title-row">
+                <h2 class="section-title">使用排行</h2>
+                <button class="text-button inline-button" type="button" id="category-button">显示类别</button>
               </div>
 
-              <div class="chart-wrap">
-                <canvas id="usage-chart" width="340" height="240"></canvas>
-                <div class="chart-tooltip hidden" id="chart-tooltip"></div>
-              </div>
+              <article class="card list-card">
+                <div id="ranking-list" class="ranking-list"></div>
+              </article>
+            </section>
 
-              <div class="chart-legend" id="chart-legend">
-                <span class="legend-dot"></span>
-                <span class="legend-label">当前设备</span>
-              </div>
-            </article>
-          </section>
+            <aside class="info-stack bridge-section">
+              <section class="bridge-card" id="bridge-card">
+                <div>
+                  <h3>浏览器网页识别</h3>
+                  <p id="bridge-url-text"></p>
+                </div>
+                <p class="bridge-hint">当前会把同一个根域名下的网页合并统计，例如不同的 bilibili 视频页都会记到 bilibili。</p>
+              </section>
 
-          <section class="section-block">
-            <div class="section-title-row">
-              <h2 class="section-title">使用排行</h2>
-              <button class="text-button inline-button" type="button" id="category-button">显示类别</button>
-            </div>
-
-            <article class="card list-card">
-              <div id="ranking-list" class="ranking-list"></div>
-            </article>
-          </section>
-
-          <section class="bridge-card" id="bridge-card">
-            <div>
-              <h3>浏览器网页识别</h3>
-              <p id="bridge-url-text"></p>
-            </div>
-            <p class="bridge-hint">要拿到具体网页 URL，需要把 browser-extension 目录作为 Chrome 或 Edge 的开发者扩展加载。</p>
-          </section>
-
-          <section class="bridge-card settings-card" id="settings-card">
-            <div class="settings-row">
-              <div>
-                <h3>开机自启动</h3>
-                <p class="settings-description">当前状态会和托盘菜单保持同步。</p>
-              </div>
-              <span class="status-pill" id="auto-launch-status">读取中</span>
-            </div>
-            <button class="settings-toggle" type="button" id="auto-launch-toggle">切换状态</button>
-          </section>
+              <section class="bridge-card compact-card">
+                <div>
+                  <h3>设置入口</h3>
+                  <p class="settings-description">右上角“设置”可进入独立设置页，查看并切换开机自启动。</p>
+                </div>
+              </section>
+            </aside>
+          </div>
         </section>
 
         <section class="screen" id="detail-screen">
@@ -95,36 +95,71 @@
             </div>
           </section>
 
-          <section class="section-block">
-            <h2 class="section-title">使用时长（截至今天）</h2>
-            <article class="card chart-card detail-card">
-              <div class="card-header">
-                <div class="big-metric" id="detail-today-duration">0 分钟</div>
-              </div>
-              <div class="chart-wrap detail-chart-wrap">
-                <canvas id="detail-day-chart" width="340" height="220"></canvas>
-                <div class="chart-tooltip hidden" id="detail-day-tooltip"></div>
-              </div>
-            </article>
+          <div class="detail-grid">
+            <section class="section-block">
+              <h2 class="section-title">使用时长（截至今天）</h2>
+              <article class="card chart-card detail-card">
+                <div class="card-header">
+                  <div class="big-metric" id="detail-today-duration">0 分钟</div>
+                </div>
+                <div class="chart-wrap detail-chart-wrap">
+                  <canvas id="detail-day-chart" width="340" height="220"></canvas>
+                  <div class="chart-tooltip hidden" id="detail-day-tooltip"></div>
+                </div>
+              </article>
+            </section>
+
+            <section class="section-block">
+              <h2 class="section-title">近 7 天使用时长</h2>
+              <article class="card chart-card detail-card">
+                <div class="card-header stacked">
+                  <div class="big-metric" id="detail-week-average">0 分钟</div>
+                  <div class="sub-metric" id="detail-week-total"></div>
+                </div>
+                <div class="chart-wrap detail-chart-wrap">
+                  <canvas id="detail-week-chart" width="340" height="220"></canvas>
+                  <div class="chart-tooltip hidden" id="detail-week-tooltip"></div>
+                </div>
+              </article>
+            </section>
+
+            <section class="section-block detail-meta-section">
+              <article class="card metadata-card" id="detail-meta"></article>
+            </section>
+          </div>
+        </section>
+
+        <section class="screen" id="settings-screen">
+          <section class="section-block settings-heading">
+            <h2 class="section-title settings-title">设置</h2>
+            <p class="settings-page-subtitle">应用级设置会与系统托盘菜单实时同步。</p>
           </section>
 
-          <section class="section-block">
-            <h2 class="section-title">近 7 天使用时长</h2>
-            <article class="card chart-card detail-card">
-              <div class="card-header stacked">
-                <div class="big-metric" id="detail-week-average">0 分钟</div>
-                <div class="sub-metric" id="detail-week-total"></div>
-              </div>
-              <div class="chart-wrap detail-chart-wrap">
-                <canvas id="detail-week-chart" width="340" height="220"></canvas>
-                <div class="chart-tooltip hidden" id="detail-week-tooltip"></div>
+          <div class="settings-layout">
+            <article class="card settings-panel">
+              <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
+                <div class="setting-copy">
+                  <span class="setting-name">开机自启动</span>
+                  <span class="setting-text">登录 Windows 后自动启动应用，并默认常驻托盘。</span>
+                </div>
+                <span class="toggle-switch" id="auto-launch-switch" aria-hidden="true">
+                  <span class="toggle-thumb"></span>
+                </span>
+              </button>
+
+              <div class="setting-status-line">
+                <span class="status-dot" id="auto-launch-dot"></span>
+                <span class="status-text" id="auto-launch-status">读取中</span>
               </div>
             </article>
-          </section>
 
-          <section class="section-block">
-            <article class="card metadata-card" id="detail-meta"></article>
-          </section>
+            <article class="bridge-card settings-help-card">
+              <div>
+                <h3>系统托盘说明</h3>
+                <p>最小化和关闭窗口都会隐藏到托盘。右键托盘图标可以显示主窗口、切换开机自启动和退出程序。</p>
+              </div>
+            </article>
+          </div>
         </section>
       </main>
     </div>
@@ -148,4 +183,4 @@
 
     <script src="./app.js"></script>
   </body>
-  </html>
+</html>

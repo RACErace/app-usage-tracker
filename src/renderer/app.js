@@ -5,6 +5,7 @@ const state = {
   selectedDayKey: null,
   detailItemKey: null,
   detail: null,
+  activeScreen: 'overview',
   unsubscribe: null
 };
 
@@ -12,6 +13,8 @@ const elements = {
   screenTitle: document.getElementById('screen-title'),
   overviewScreen: document.getElementById('overview-screen'),
   detailScreen: document.getElementById('detail-screen'),
+  settingsScreen: document.getElementById('settings-screen'),
+  settingsButton: document.getElementById('settings-button'),
   rangeTabs: [...document.querySelectorAll('.range-tab')],
   previousDay: document.getElementById('previous-day'),
   nextDay: document.getElementById('next-day'),
@@ -23,10 +26,8 @@ const elements = {
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
   bridgeUrlText: document.getElementById('bridge-url-text'),
-  autoLaunchStatus: document.getElementById('auto-launch-status'),
-  autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   refreshButton: document.getElementById('refresh-button'),
-  backButton: document.querySelector('.back-button'),
+  backButton: document.getElementById('back-button'),
   detailAvatar: document.getElementById('detail-avatar'),
   detailTitle: document.getElementById('detail-title'),
   detailSubtitle: document.getElementById('detail-subtitle'),
@@ -38,15 +39,12 @@ const elements = {
   detailWeekChart: document.getElementById('detail-week-chart'),
   detailWeekTooltip: document.getElementById('detail-week-tooltip'),
   detailMeta: document.getElementById('detail-meta'),
+  autoLaunchStatus: document.getElementById('auto-launch-status'),
+  autoLaunchToggle: document.getElementById('auto-launch-toggle'),
+  autoLaunchSwitch: document.getElementById('auto-launch-switch'),
+  autoLaunchDot: document.getElementById('auto-launch-dot'),
   itemTemplate: document.getElementById('ranking-item-template')
 };
-
-function renderSettings() {
-  const enabled = Boolean(state.settings?.autoLaunchEnabled);
-  elements.autoLaunchStatus.textContent = enabled ? '已开启' : '未开启';
-  elements.autoLaunchStatus.classList.toggle('active', enabled);
-  elements.autoLaunchToggle.textContent = enabled ? '关闭开机自启动' : '开启开机自启动';
-}
 
 function formatDuration(ms, mode = 'long') {
   const totalMinutes = Math.round((ms || 0) / 60000);
@@ -120,6 +118,54 @@ function getInitials(item) {
   return filtered.slice(0, 2).toUpperCase();
 }
 
+function lookupDay(dayKey) {
+  return state.snapshot?.daily?.days?.[dayKey] || {
+    totalMs: 0,
+    items: [],
+    hourly: new Array(24).fill(0)
+  };
+}
+
+function ensureSelectedDayKey() {
+  const availableDays = state.snapshot?.daily?.availableDays || [];
+  if (!availableDays.length) {
+    state.selectedDayKey = null;
+    return;
+  }
+
+  if (!state.selectedDayKey || !availableDays.includes(state.selectedDayKey)) {
+    state.selectedDayKey = state.snapshot.meta.latestDayKey || availableDays[availableDays.length - 1];
+  }
+}
+
+function getRankingSubtitle(item) {
+  if (item.kind === 'site') {
+    return item.host || item.subtitle || item.appName || '';
+  }
+
+  if (item.kind === 'page') {
+    return item.host || item.subtitle || item.url || item.appName || '';
+  }
+
+  return item.subtitle || item.windowTitle || item.appName || '';
+}
+
+function getDetailSubtitle(detail) {
+  if (!detail) {
+    return '';
+  }
+
+  if (detail.kind === 'site') {
+    return detail.host || detail.appName || '';
+  }
+
+  if (detail.kind === 'page') {
+    return detail.host || detail.url || detail.appName || '';
+  }
+
+  return detail.appName || '';
+}
+
 function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }) {
   const context = canvas.getContext('2d');
   const width = canvas.width;
@@ -152,22 +198,23 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     const x = padding.left + step * index + (step - barWidth) / 2;
     const barHeight = Math.max(4, (value / maxValue) * chartHeight);
     const y = padding.top + chartHeight - barHeight;
+    const label = typeof labels === 'function' ? labels(index) : labels[index];
 
     context.fillStyle = color;
     context.beginPath();
     context.roundRect(x, y, barWidth, barHeight, 6);
     context.fill();
 
-    const label = typeof labels === 'function' ? labels(index) : labels[index];
     if (label) {
       context.fillStyle = 'rgba(255, 255, 255, 0.5)';
       context.textAlign = 'center';
       context.fillText(label, x + barWidth / 2, height - 8);
     }
-    hitAreas.push({ x, y, width: barWidth, height: chartHeight, value, label: labels[index], index });
+
+    hitAreas.push({ x, y, width: barWidth, height: chartHeight, value, label, index });
   });
 
-  const pointerHandler = (event) => {
+  canvas.onmousemove = (event) => {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -175,16 +222,16 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     const pointY = (event.clientY - rect.top) * scaleY;
     const hit = hitAreas.find((area) => pointX >= area.x && pointX <= area.x + area.width && pointY >= padding.top && pointY <= padding.top + chartHeight);
 
-    if (hit) {
-      if (typeof onHover === 'function') {
-        onHover(hit, rect);
-      }
-    } else {
+    if (!hit) {
       tooltip.classList.add('hidden');
+      return;
+    }
+
+    if (typeof onHover === 'function') {
+      onHover(hit, rect);
     }
   };
 
-  canvas.onmousemove = pointerHandler;
   canvas.onmouseleave = () => {
     tooltip.classList.add('hidden');
   };
@@ -199,12 +246,65 @@ function showTooltip(tooltip, rect, chartPoint, content) {
   tooltip.style.top = `${Math.max(relativeY * 100 - 4, 15)}%`;
 }
 
-function lookupDay(dayKey) {
-  return state.snapshot?.daily?.days?.[dayKey] || {
-    totalMs: 0,
-    items: [],
-    hourly: new Array(24).fill(0)
-  };
+function updateHeader() {
+  const isOverview = state.activeScreen === 'overview';
+  const isDetail = state.activeScreen === 'detail';
+
+  elements.backButton.classList.toggle('inactive', isOverview);
+  elements.settingsButton.classList.toggle('hidden-action', !isOverview);
+  elements.screenTitle.textContent = isDetail
+    ? (state.detail?.label || '详情')
+    : state.activeScreen === 'settings'
+      ? '设置'
+      : '使用统计';
+}
+
+function showScreen(screen) {
+  state.activeScreen = screen;
+  elements.overviewScreen.classList.toggle('active', screen === 'overview');
+  elements.detailScreen.classList.toggle('active', screen === 'detail');
+  elements.settingsScreen.classList.toggle('active', screen === 'settings');
+  updateHeader();
+}
+
+function renderSettingsState() {
+  const enabled = Boolean(state.settings?.autoLaunchEnabled);
+  elements.autoLaunchSwitch.classList.toggle('active', enabled);
+  elements.autoLaunchDot.classList.toggle('active', enabled);
+  elements.autoLaunchStatus.textContent = enabled ? '已开启开机自启动' : '未开启开机自启动';
+  elements.autoLaunchToggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+}
+
+function renderRanking(items, totalMs) {
+  elements.rankingList.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ranking-subtitle';
+    empty.textContent = '当前还没有采集到使用数据。';
+    elements.rankingList.appendChild(empty);
+    return;
+  }
+
+  items.slice(0, 8).forEach((item) => {
+    const fragment = elements.itemTemplate.content.cloneNode(true);
+    const button = fragment.querySelector('.ranking-item');
+    const avatar = fragment.querySelector('.app-avatar');
+    const name = fragment.querySelector('.ranking-name');
+    const duration = fragment.querySelector('.ranking-duration');
+    const subtitle = fragment.querySelector('.ranking-subtitle');
+    const progress = fragment.querySelector('.progress-bar');
+    const ratio = totalMs ? Math.max(item.totalMs / totalMs, 0.04) : 0;
+
+    avatar.textContent = getInitials(item);
+    avatar.style.background = item.color;
+    name.textContent = item.label;
+    duration.textContent = formatDuration(item.totalMs, 'short');
+    subtitle.textContent = getRankingSubtitle(item);
+    progress.style.width = `${Math.round(ratio * 100)}%`;
+    progress.style.background = `linear-gradient(90deg, ${item.color}, #2ca9ff)`;
+    button.addEventListener('click', () => openDetail(item.key));
+    elements.rankingList.appendChild(fragment);
+  });
 }
 
 function renderOverview() {
@@ -213,13 +313,11 @@ function renderOverview() {
     return;
   }
 
-  const availableDays = snapshot.daily.availableDays;
-  if (!state.selectedDayKey) {
-    state.selectedDayKey = snapshot.meta.latestDayKey;
-  }
-
+  ensureSelectedDayKey();
   const activeDay = lookupDay(state.selectedDayKey);
   const isDaily = state.selectedRange === 'daily';
+  const rankingItems = isDaily ? activeDay.items : snapshot.weekly.items;
+  const totalMs = isDaily ? activeDay.totalMs : snapshot.weekly.totalMs;
 
   elements.rangeTabs.forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.range === state.selectedRange);
@@ -230,14 +328,11 @@ function renderOverview() {
   elements.dateLabel.textContent = isDaily ? formatDayLabel(state.selectedDayKey) : formatWeekRange(snapshot.weekly.dayKeys);
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
   elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(snapshot.weekly.averageMs, 'short');
-  elements.summarySubtitle.textContent = isDaily
-    ? ''
-    : `总时长：${formatDuration(snapshot.weekly.totalMs)}`;
+  elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(snapshot.weekly.totalMs)}`;
   elements.bridgeUrlText.textContent = snapshot.meta.bridgeUrl;
-  renderSettings();
 
-  const rankingItems = isDaily ? activeDay.items : snapshot.weekly.items;
-  renderRanking(rankingItems, isDaily ? activeDay.totalMs : snapshot.weekly.totalMs);
+  renderRanking(rankingItems, totalMs);
+  renderSettingsState();
 
   if (isDaily) {
     const hourly = activeDay.hourly || snapshot.daily.hourly;
@@ -253,14 +348,12 @@ function renderOverview() {
       color: '#1a8dff',
       tooltip: elements.chartTooltip,
       onHover: (hit, rect) => {
-        const index = hit.index;
-        const hourLabel = `${index} 时 - ${index + 1} 时`;
         const topItems = activeDay.items
           .map((item) => ({
             label: item.label,
             initials: getInitials(item),
             color: item.color,
-            minutes: Math.round(((item.hourly && item.hourly[index]) || 0) / 60000)
+            minutes: Math.round(((item.hourly && item.hourly[hit.index]) || 0) / 60000)
           }))
           .filter((item) => item.minutes > 0)
           .sort((left, right) => right.minutes - left.minutes)
@@ -272,7 +365,7 @@ function renderOverview() {
           hit,
           `
             <span class="tooltip-value">${formatDuration(hit.value * 60000)}</span>
-            <span class="tooltip-label">${hourLabel}</span>
+            <span class="tooltip-label">${hit.index} 时 - ${hit.index + 1} 时</span>
             <div class="tooltip-list">
               ${topItems
                 .map(
@@ -288,10 +381,9 @@ function renderOverview() {
       }
     });
   } else {
-    const totals = snapshot.weekly.dailyTotals.map((item) => Math.round(item.totalMs / 3600000 * 10) / 10);
     drawBarChart({
       canvas: elements.chartCanvas,
-      bars: totals,
+      bars: snapshot.weekly.dailyTotals.map((item) => Math.round((item.totalMs / 3600000) * 10) / 10),
       labels: snapshot.weekly.dayKeys.map((dayKey) => weekdayLabel(dayKey)),
       yLabels: [
         { ratio: 0, label: '0' },
@@ -336,65 +428,42 @@ function renderOverview() {
     });
   }
 
-  highlightScreen('overview');
-}
-
-function renderRanking(items, totalMs) {
-  elements.rankingList.innerHTML = '';
-  if (!items.length) {
-    const empty = document.createElement('div');
-    empty.className = 'ranking-subtitle';
-    empty.textContent = '当前还没有采集到使用数据。';
-    elements.rankingList.appendChild(empty);
-    return;
-  }
-
-  items.slice(0, 8).forEach((item) => {
-    const fragment = elements.itemTemplate.content.cloneNode(true);
-    const button = fragment.querySelector('.ranking-item');
-    const avatar = fragment.querySelector('.app-avatar');
-    const name = fragment.querySelector('.ranking-name');
-    const duration = fragment.querySelector('.ranking-duration');
-    const subtitle = fragment.querySelector('.ranking-subtitle');
-    const progress = fragment.querySelector('.progress-bar');
-    const ratio = totalMs ? Math.max(item.totalMs / totalMs, 0.04) : 0;
-
-    avatar.textContent = getInitials(item);
-    avatar.style.background = item.color;
-    name.textContent = item.label;
-    duration.textContent = formatDuration(item.totalMs, 'short');
-    subtitle.textContent = item.url || item.subtitle || item.windowTitle || item.appName;
-    progress.style.width = `${Math.round(ratio * 100)}%`;
-    progress.style.background = `linear-gradient(90deg, ${item.color}, #2ca9ff)`;
-    button.addEventListener('click', () => openDetail(item.key));
-    elements.rankingList.appendChild(fragment);
-  });
+  showScreen('overview');
 }
 
 function renderDetail() {
   const detail = state.detail;
   if (!detail) {
+    renderOverview();
     return;
   }
 
   elements.detailAvatar.textContent = getInitials(detail);
   elements.detailAvatar.style.background = detail.color;
   elements.detailTitle.textContent = detail.label;
-  elements.detailSubtitle.textContent = detail.kind === 'page'
-    ? detail.url || detail.host
-    : detail.appName;
+  elements.detailSubtitle.textContent = getDetailSubtitle(detail);
   elements.detailTodayDuration.textContent = formatDuration(detail.todayHourly.reduce((sum, item) => sum + item, 0));
   elements.detailWeekAverage.textContent = `日均 ${formatDuration(detail.averageMs, 'short')}`;
   elements.detailWeekTotal.textContent = `总时长：${formatDuration(detail.totalMs)}`;
 
   elements.detailMeta.innerHTML = '';
-  [
-    ['应用', detail.appName],
-    ['页面标题', detail.pageTitle || detail.windowTitle],
-    ['网页地址', detail.url],
-    ['域名', detail.host],
-    ['可执行文件', detail.executablePath]
-  ]
+  const metaRows = detail.kind === 'site'
+    ? [
+        ['应用', detail.appName],
+        ['站点域名', detail.host],
+        ['最近网页标题', detail.pageTitle || detail.windowTitle],
+        ['最近网页地址', detail.url],
+        ['可执行文件', detail.executablePath]
+      ]
+    : [
+        ['应用', detail.appName],
+        ['页面标题', detail.pageTitle || detail.windowTitle],
+        ['网页地址', detail.url],
+        ['域名', detail.host],
+        ['可执行文件', detail.executablePath]
+      ];
+
+  metaRows
     .filter(([, value]) => value)
     .forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -406,7 +475,7 @@ function renderDetail() {
   drawBarChart({
     canvas: elements.detailDayChart,
     bars: detail.todayHourly.map((value) => Math.round(value / 60000)),
-      labels: (index) => ({ 0: '0', 6: '6', 12: '12', 18: '18' }[index] || ''),
+    labels: (index) => ({ 0: '0', 6: '6', 12: '12', 18: '18' }[index] || ''),
     yLabels: [
       { ratio: 0, label: '0' },
       { ratio: 0.5, label: '30 分钟' },
@@ -446,27 +515,29 @@ function renderDetail() {
     }
   });
 
-  highlightScreen('detail');
+  showScreen('detail');
 }
 
-function highlightScreen(screen) {
-  const isDetail = screen === 'detail';
-  elements.overviewScreen.classList.toggle('active', !isDetail);
-  elements.detailScreen.classList.toggle('active', isDetail);
-  elements.screenTitle.textContent = isDetail ? detailTitleText() : '使用统计';
-}
-
-function detailTitleText() {
-  return state.detail ? state.detail.label : '使用统计';
+function renderSettingsScreen() {
+  renderSettingsState();
+  showScreen('settings');
 }
 
 async function openDetail(itemKey) {
   state.detailItemKey = itemKey;
-  state.detail = await window.usageApi.getDetail(itemKey);
+  const detail = await window.usageApi.getDetail(itemKey);
+  if (!detail) {
+    state.detailItemKey = null;
+    state.detail = null;
+    renderOverview();
+    return;
+  }
+
+  state.detail = detail;
   renderDetail();
 }
 
-function closeDetail() {
+function returnToOverview() {
   state.detailItemKey = null;
   state.detail = null;
   renderOverview();
@@ -500,7 +571,7 @@ function bindEvents() {
 
     const days = state.snapshot.daily.availableDays;
     const currentIndex = days.indexOf(state.selectedDayKey);
-    if (currentIndex < days.length - 1) {
+    if (currentIndex >= 0 && currentIndex < days.length - 1) {
       state.selectedDayKey = days[currentIndex + 1];
       renderOverview();
     }
@@ -511,21 +582,27 @@ function bindEvents() {
     renderOverview();
   });
 
+  elements.settingsButton.addEventListener('click', () => {
+    renderSettingsScreen();
+  });
+
   elements.autoLaunchToggle.addEventListener('click', async () => {
     const nextValue = !Boolean(state.settings?.autoLaunchEnabled);
     elements.autoLaunchToggle.disabled = true;
     try {
       state.settings = await window.usageApi.setAutoLaunch(nextValue);
-      renderSettings();
+      renderSettingsState();
     } finally {
       elements.autoLaunchToggle.disabled = false;
     }
   });
 
   elements.backButton.addEventListener('click', () => {
-    if (state.detailItemKey) {
-      closeDetail();
+    if (state.activeScreen === 'overview') {
+      return;
     }
+
+    returnToOverview();
   });
 }
 
@@ -535,27 +612,30 @@ async function bootstrap() {
     window.usageApi.getSnapshot(),
     window.usageApi.getSettings()
   ]);
-  if (state.snapshot) {
-    state.selectedDayKey = state.snapshot.meta.latestDayKey;
-  }
 
+  ensureSelectedDayKey();
   renderOverview();
+
   state.unsubscribe = window.usageApi.onDataChanged((snapshot) => {
     state.snapshot = snapshot;
-    if (!state.selectedDayKey) {
-      state.selectedDayKey = snapshot.meta.latestDayKey;
-    }
+    ensureSelectedDayKey();
 
     if (state.detailItemKey) {
       openDetail(state.detailItemKey);
-    } else {
-      renderOverview();
+      return;
     }
+
+    if (state.activeScreen === 'settings') {
+      renderSettingsScreen();
+      return;
+    }
+
+    renderOverview();
   });
 
   window.usageApi.onSettingsChanged((settings) => {
     state.settings = settings;
-    renderSettings();
+    renderSettingsState();
   });
 }
 

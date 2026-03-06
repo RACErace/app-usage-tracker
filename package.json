@@ -4,7 +4,8 @@
   "description": "Desktop app usage tracker with browser page awareness",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/start-detached.js",
+    "start:dev": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
