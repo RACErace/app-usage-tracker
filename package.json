@@ -7,7 +7,9 @@
     "start": "node scripts/start-detached.js",
     "start:dev": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "dist:portable": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis"
   },
   "build": {
     "appId": "com.copilot.appusagetracker",
