@@ -41,11 +41,26 @@ function readAutoLaunchState() {
 function writeAutoLaunchState(enabled) {
   app.setLoginItemSettings(getLoginItemOptions(enabled));
   autoLaunchEnabled = readAutoLaunchState();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('settings:changed', {
+      autoLaunchEnabled
+    });
+  }
   updateTrayMenu();
 }
 
+function resolveAppIconPath() {
+  return path.join(app.getAppPath(), 'app.ico');
+}
+
 function createTrayIcon() {
-  const svg = `
+  const iconPath = resolveAppIconPath();
+  const icon = nativeImage.createFromPath(iconPath);
+  if (!icon.isEmpty()) {
+    return icon.resize({ width: 16, height: 16 });
+  }
+
+  const fallbackSvg = `
     <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="64" height="64" rx="18" fill="#111216"/>
       <rect x="12" y="38" width="8" height="14" rx="3" fill="#1A8DFF"/>
@@ -54,7 +69,7 @@ function createTrayIcon() {
     </svg>`;
 
   return nativeImage
-    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
+    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(fallbackSvg).toString('base64')}`)
     .resize({ width: 16, height: 16 });
 }
 
@@ -142,6 +157,7 @@ function createWindow() {
     backgroundColor: '#050507',
     autoHideMenuBar: true,
     title: '使用统计',
+    icon: resolveAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
