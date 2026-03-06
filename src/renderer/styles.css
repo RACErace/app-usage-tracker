@@ -378,6 +378,19 @@ canvas {
   color: white;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.06));
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.app-avatar.has-image,
+.detail-app-chip.has-image {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .ranking-main {

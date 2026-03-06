@@ -6,6 +6,7 @@ const state = {
   detailItemKey: null,
   detail: null,
   activeScreen: 'overview',
+  iconCache: new Map(),
   unsubscribe: null
 };
 
@@ -116,6 +117,74 @@ function getInitials(item) {
   }
 
   return filtered.slice(0, 2).toUpperCase();
+}
+
+function getIconRequestPayload(item) {
+  return {
+    key: item.key,
+    kind: item.kind,
+    url: item.url,
+    host: item.host,
+    executablePath: item.executablePath,
+    appName: item.appName,
+    browserFamily: item.browserFamily
+  };
+}
+
+function setAvatarContent(element, item, iconDataUrl) {
+  if (!element) {
+    return;
+  }
+
+  element.innerHTML = '';
+  element.style.background = item.color;
+  element.classList.toggle('has-image', Boolean(iconDataUrl));
+
+  if (iconDataUrl) {
+    const image = document.createElement('img');
+    image.className = 'avatar-image';
+    image.src = iconDataUrl;
+    image.alt = `${item.label} 图标`;
+    element.appendChild(image);
+    return;
+  }
+
+  element.textContent = getInitials(item);
+}
+
+async function requestIcons(items) {
+  const pendingItems = items.filter((item) => item?.key && !state.iconCache.has(item.key));
+  if (!pendingItems.length) {
+    return;
+  }
+
+  const iconMap = await window.usageApi.getIcons(pendingItems.map(getIconRequestPayload));
+  Object.entries(iconMap || {}).forEach(([key, value]) => {
+    state.iconCache.set(key, value || null);
+  });
+}
+
+function patchRankingIcons(items) {
+  items.forEach((item) => {
+    const avatar = elements.rankingList.querySelector(`[data-item-key="${CSS.escape(item.key)}"] .app-avatar`);
+    if (!avatar) {
+      return;
+    }
+
+    setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
+  });
+}
+
+async function hydrateRankingIcons(items) {
+  await requestIcons(items);
+  patchRankingIcons(items);
+}
+
+async function hydrateDetailIcon(item) {
+  await requestIcons([item]);
+  if (state.detail && state.detail.key === item.key) {
+    setAvatarContent(elements.detailAvatar, item, state.iconCache.get(item.key) || null);
+  }
 }
 
 function lookupDay(dayKey) {
@@ -295,8 +364,8 @@ function renderRanking(items, totalMs) {
     const progress = fragment.querySelector('.progress-bar');
     const ratio = totalMs ? Math.max(item.totalMs / totalMs, 0.04) : 0;
 
-    avatar.textContent = getInitials(item);
-    avatar.style.background = item.color;
+    button.dataset.itemKey = item.key;
+    setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
     name.textContent = item.label;
     duration.textContent = formatDuration(item.totalMs, 'short');
     subtitle.textContent = getRankingSubtitle(item);
@@ -305,6 +374,8 @@ function renderRanking(items, totalMs) {
     button.addEventListener('click', () => openDetail(item.key));
     elements.rankingList.appendChild(fragment);
   });
+
+  hydrateRankingIcons(items.slice(0, 8)).catch(() => {});
 }
 
 function renderOverview() {
@@ -438,8 +509,7 @@ function renderDetail() {
     return;
   }
 
-  elements.detailAvatar.textContent = getInitials(detail);
-  elements.detailAvatar.style.background = detail.color;
+  setAvatarContent(elements.detailAvatar, detail, state.iconCache.get(detail.key) || null);
   elements.detailTitle.textContent = detail.label;
   elements.detailSubtitle.textContent = getDetailSubtitle(detail);
   elements.detailTodayDuration.textContent = formatDuration(detail.todayHourly.reduce((sum, item) => sum + item, 0));
@@ -515,6 +585,7 @@ function renderDetail() {
     }
   });
 
+  hydrateDetailIcon(detail).catch(() => {});
   showScreen('detail');
 }
 

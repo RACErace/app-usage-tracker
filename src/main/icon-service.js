@@ -1,0 +1,304 @@
+const fs = require('fs/promises');
+const path = require('path');
+const { app, nativeImage } = require('electron');
+
+const ICON_FETCH_TIMEOUT_MS = 6000;
+const NULL_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function toDataUrl(image) {
+  if (!image || image.isEmpty()) {
+    return null;
+  }
+
+  return image.resize({ width: 64, height: 64 }).toDataURL();
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+async function fileExists(filePath) {
+  if (!filePath) {
+    return false;
+  }
+
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+class UsageIconService {
+  constructor() {
+    this.cache = new Map();
+    this.pending = new Map();
+    this.missCache = new Map();
+    this.cacheDir = path.join(app.getPath('userData'), 'icon-cache');
+    this.indexFilePath = path.join(this.cacheDir, 'index.json');
+    this.diskIndex = {};
+    this.initialized = false;
+    this.initializing = null;
+  }
+
+  async resolveItems(items) {
+    const entries = await Promise.all(
+      (Array.isArray(items) ? items : []).map(async (item) => [item.key, await this.resolveItemIcon(item)])
+    );
+
+    return Object.fromEntries(entries.filter(([key]) => key));
+  }
+
+  async resolveItemIcon(item) {
+    if (!item || !item.key) {
+      return null;
+    }
+
+    return this.getCached(`item:${item.key}`, async () => {
+      const isWebsiteItem = item.kind === 'site' || item.kind === 'page';
+      if (isWebsiteItem) {
+        return this.resolveWebsiteIcon(item);
+      }
+
+      if (item.host || item.url) {
+        const websiteIcon = await this.resolveWebsiteIcon(item);
+        if (websiteIcon) {
+          return websiteIcon;
+        }
+      }
+
+      if (item.executablePath) {
+        const appIcon = await this.resolveExecutableIcon(item.executablePath);
+        if (appIcon) {
+          return appIcon;
+        }
+      }
+
+      return null;
+    });
+  }
+
+  async resolveExecutableIcon(executablePath) {
+    if (!executablePath) {
+      return null;
+    }
+
+    return this.getCached(`exe:${executablePath}`, async () => {
+      if (!(await fileExists(executablePath))) {
+        return null;
+      }
+
+      try {
+        const icon = await app.getFileIcon(executablePath, { size: 'normal' });
+        return toDataUrl(icon);
+      } catch {
+        return null;
+      }
+    });
+  }
+
+  async resolveWebsiteIcon(item) {
+    const candidates = this.getWebsiteCandidates(item);
+    for (const candidate of candidates) {
+      const icon = await this.getCached(`url:${candidate}`, () => this.fetchImageDataUrl(candidate));
+      if (icon) {
+        return icon;
+      }
+    }
+
+    return null;
+  }
+
+  getWebsiteCandidates(item) {
+    const candidates = [];
+
+    if (item.url) {
+      try {
+        const url = new URL(item.url);
+        candidates.push(new URL('/favicon.ico', url.origin).toString());
+        candidates.push(`https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (item.host) {
+      const normalizedHost = String(item.host).trim();
+      if (normalizedHost) {
+        candidates.push(`https://${normalizedHost}/favicon.ico`);
+        candidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(normalizedHost)}`);
+      }
+    }
+
+    return [...new Set(candidates)];
+  }
+
+  async fetchImageDataUrl(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ICON_FETCH_TIMEOUT_MS);
+
+    try {
+      let referer = '';
+      let origin = '';
+      try {
+        const targetUrl = new URL(url);
+        origin = targetUrl.origin;
+        referer = `${targetUrl.origin}/`;
+      } catch {
+        // ignore
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          ...(origin ? { Origin: origin } : {}),
+          ...(referer ? { Referer: referer } : {})
+        }
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer.length) {
+        return null;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.startsWith('image/')) {
+        return `data:${contentType};base64,${buffer.toString('base64')}`;
+      }
+
+      const image = nativeImage.createFromBuffer(buffer);
+      return toDataUrl(image);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async getCached(cacheKey, producer) {
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey);
+    }
+
+    const missExpiresAt = this.missCache.get(cacheKey);
+    if (missExpiresAt && missExpiresAt > Date.now()) {
+      return null;
+    }
+
+    if (missExpiresAt) {
+      this.missCache.delete(cacheKey);
+    }
+
+    if (this.pending.has(cacheKey)) {
+      return this.pending.get(cacheKey);
+    }
+
+    const promise = this.readDiskCache(cacheKey)
+      .then((cachedValue) => {
+        if (cachedValue !== undefined) {
+          this.cache.set(cacheKey, cachedValue);
+          this.pending.delete(cacheKey);
+          return cachedValue;
+        }
+
+        return Promise.resolve(producer())
+          .then(async (result) => {
+            this.pending.delete(cacheKey);
+            if (result) {
+              this.cache.set(cacheKey, result);
+              this.missCache.delete(cacheKey);
+              await this.writeDiskCache(cacheKey, result);
+              return result;
+            }
+
+            this.missCache.set(cacheKey, Date.now() + NULL_CACHE_TTL_MS);
+            return null;
+          });
+      })
+      .catch(() => {
+        this.pending.delete(cacheKey);
+        this.missCache.set(cacheKey, Date.now() + NULL_CACHE_TTL_MS);
+        return null;
+      });
+
+    this.pending.set(cacheKey, promise);
+    return promise;
+  }
+
+  async ensureInitialized() {
+    if (this.initialized) {
+      return;
+    }
+
+    if (this.initializing) {
+      await this.initializing;
+      return;
+    }
+
+    this.initializing = (async () => {
+      await fs.mkdir(this.cacheDir, { recursive: true });
+      try {
+        const raw = await fs.readFile(this.indexFilePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        this.diskIndex = parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        this.diskIndex = {};
+      }
+
+      this.initialized = true;
+      this.initializing = null;
+    })();
+
+    await this.initializing;
+  }
+
+  async readDiskCache(cacheKey) {
+    await this.ensureInitialized();
+    const fileName = this.diskIndex[cacheKey];
+    if (!fileName) {
+      return undefined;
+    }
+
+    const filePath = path.join(this.cacheDir, fileName);
+    try {
+      return await fs.readFile(filePath, 'utf8');
+    } catch {
+      delete this.diskIndex[cacheKey];
+      await this.saveIndex();
+      return undefined;
+    }
+  }
+
+  async writeDiskCache(cacheKey, dataUrl) {
+    await this.ensureInitialized();
+    const fileName = `${hashString(cacheKey)}.txt`;
+    const filePath = path.join(this.cacheDir, fileName);
+    await fs.writeFile(filePath, dataUrl, 'utf8');
+    this.diskIndex[cacheKey] = fileName;
+    await this.saveIndex();
+  }
+
+  async saveIndex() {
+    await fs.mkdir(this.cacheDir, { recursive: true });
+    await fs.writeFile(this.indexFilePath, JSON.stringify(this.diskIndex, null, 2), 'utf8');
+  }
+}
+
+module.exports = {
+  UsageIconService
+};
