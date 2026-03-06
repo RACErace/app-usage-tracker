@@ -2,7 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
 
-const DATA_VERSION = 2;
+const DATA_VERSION = 3;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
 const BROWSER_EVENT_TTL_MS = 65000;
@@ -128,6 +128,47 @@ function getDomainDisplayName(hostname) {
   return sanitizeText(firstLabel, rootDomain).toLowerCase();
 }
 
+function normalizeComparableToken(value) {
+  return sanitizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '');
+}
+
+function getExecutableName(executablePath) {
+  const normalized = sanitizeText(executablePath);
+  if (!normalized) {
+    return '';
+  }
+
+  try {
+    return path.basename(normalized).toLowerCase();
+  } catch {
+    const segments = normalized.split(/[\\/]/);
+    return sanitizeText(segments[segments.length - 1]).toLowerCase();
+  }
+}
+
+const SERVICE_PROFILES = [
+  {
+    id: 'chatgpt',
+    displayLabel: 'ChatGPT',
+    domains: ['chatgpt.com'],
+    appNames: ['chatgpt', 'openai chatgpt'],
+    executables: ['chatgpt.exe']
+  },
+  {
+    id: 'bilibili',
+    displayLabel: 'bilibili',
+    domains: ['bilibili.com'],
+    appNames: ['bilibili', '哔哩哔哩'],
+    executables: ['bilibili.exe']
+  }
+].map((profile) => ({
+  ...profile,
+  appTokens: profile.appNames.map((value) => normalizeComparableToken(value)).filter(Boolean),
+  executableTokens: profile.executables.map((value) => normalizeComparableToken(value)).filter(Boolean)
+}));
+
 function getBrowserFamily(appName) {
   const normalized = sanitizeText(appName).toLowerCase();
   const match = BROWSER_APP_PATTERNS.find((pattern) => pattern.names.includes(normalized));
@@ -136,6 +177,49 @@ function getBrowserFamily(appName) {
 
 function isBrowserApp(appName) {
   return Boolean(getBrowserFamily(appName));
+}
+
+function findServiceProfile(entry) {
+  if (!entry) {
+    return null;
+  }
+
+  const normalizedUrl = normalizeUrl(entry.url || '');
+  const rootDomain = getRootDomain(entry.host || normalizedUrl?.hostname || '');
+  const tokens = new Set([
+    normalizeComparableToken(entry.appName),
+    normalizeComparableToken(entry.label),
+    normalizeComparableToken(getExecutableName(entry.executablePath))
+  ].filter(Boolean));
+
+  return SERVICE_PROFILES.find((profile) => {
+    if (rootDomain && profile.domains.includes(rootDomain)) {
+      return true;
+    }
+
+    return profile.appTokens.some((token) => tokens.has(token))
+      || profile.executableTokens.some((token) => tokens.has(token));
+  }) || null;
+}
+
+function canonicalizeEntry(entry) {
+  const profile = findServiceProfile(entry);
+  if (!profile) {
+    return entry;
+  }
+
+  const key = `service:${profile.id}`;
+  const isBrowserBacked = isBrowserApp(entry.appName) || Boolean(entry.browserFamily);
+  return {
+    ...entry,
+    key,
+    kind: 'service',
+    label: profile.displayLabel,
+    appName: profile.displayLabel,
+    host: sanitizeText(entry.host, profile.domains[0] || ''),
+    executablePath: isBrowserBacked ? '' : sanitizeText(entry.executablePath),
+    color: getColorFromKey(key)
+  };
 }
 
 function cloneItem(item) {
@@ -342,18 +426,23 @@ function migrateDay(day) {
     if (isBrowserUsageItem(item) && hasWebsiteMetadata(item)) {
       const siteItem = buildSiteEntry(item);
       if (siteItem) {
-        mergeIntoMap(nextItems, siteItem);
-        if (item.key !== siteItem.key || item.kind !== 'site' || item.host !== siteItem.host || item.label !== siteItem.label) {
+        const canonicalItem = canonicalizeEntry(siteItem);
+        mergeIntoMap(nextItems, canonicalItem);
+        if (item.key !== canonicalItem.key || item.kind !== canonicalItem.kind || item.host !== canonicalItem.host || item.label !== canonicalItem.label) {
           changed = true;
         }
         continue;
       }
     }
 
-    mergeIntoMap(nextItems, item);
+    const canonicalItem = canonicalizeEntry(item);
+    mergeIntoMap(nextItems, canonicalItem);
+    if (canonicalItem.key !== item.key || canonicalItem.kind !== item.kind || canonicalItem.label !== item.label) {
+      changed = true;
+    }
   }
 
-  const siteCandidates = Object.values(nextItems).filter((item) => item.kind === 'site');
+  const siteCandidates = Object.values(nextItems).filter((item) => Boolean(item.host));
   for (const item of Object.values(nextItems)) {
     if (!isBrowserUsageItem(item) || item.kind !== 'app' || hasWebsiteMetadata(item)) {
       continue;
@@ -376,8 +465,10 @@ function migrateDay(day) {
       continue;
     }
 
+    const canonicalItem = canonicalizeEntry(siteItem);
+
     delete nextItems[item.key];
-    mergeIntoMap(nextItems, siteItem);
+    mergeIntoMap(nextItems, canonicalItem);
     changed = true;
   }
 
@@ -568,7 +659,7 @@ class UsageTracker {
       if (browserEvent) {
         const groupedDomain = browserEvent.rootDomain || browserEvent.host;
         const pageKey = `site:${hashString(groupedDomain)}`;
-        return {
+        return canonicalizeEntry({
           key: pageKey,
           kind: 'site',
           appName,
@@ -584,12 +675,12 @@ class UsageTracker {
           startedAt: now,
           lastSeenAt: now,
           executablePath
-        };
+        });
       }
     }
 
     const appKey = `app:${toIdSegment(appName)}:${hashString(`${appName}|${executablePath}`)}`;
-    return {
+    return canonicalizeEntry({
       key: appKey,
       kind: 'app',
       appName,
@@ -605,7 +696,7 @@ class UsageTracker {
       startedAt: now,
       lastSeenAt: now,
       executablePath
-    };
+    });
   }
 
   commitCurrentEntry(now) {
