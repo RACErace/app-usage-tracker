@@ -1,12 +1,14 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const { UsageTracker } = require('./tracker');
+const { UsageIconService } = require('./icon-service');
 
 let mainWindow;
 let usageTracker;
 let tray;
 let isQuitting = false;
 let autoLaunchEnabled = false;
+let usageIconService;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -193,6 +195,7 @@ function createWindow() {
 
 async function bootstrap() {
   autoLaunchEnabled = readAutoLaunchState();
+  usageIconService = new UsageIconService();
 
   usageTracker = new UsageTracker({
     userDataPath: app.getPath('userData'),
@@ -271,4 +274,12 @@ ipcMain.handle('usage:force-poll', async () => {
 
   await usageTracker.pollActiveWindow();
   return usageTracker.getSnapshot();
+});
+
+ipcMain.handle('usage:get-icons', async (_event, items) => {
+  if (!usageIconService) {
+    return {};
+  }
+
+  return usageIconService.resolveItems(Array.isArray(items) ? items : []);
 });
