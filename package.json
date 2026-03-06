@@ -1,0 +1,34 @@
+{
+  "name": "app-usage-tracker",
+  "version": "1.0.0",
+  "description": "Desktop app usage tracker with browser page awareness",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.copilot.appusagetracker",
+    "productName": "App Usage Tracker",
+    "files": [
+      "src/**/*",
+      "browser-extension/**/*",
+      "README.md",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "active-win": "^9.0.0"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

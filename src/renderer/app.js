@@ -1,0 +1,532 @@
+const state = {
+  snapshot: null,
+  selectedRange: 'daily',
+  selectedDayKey: null,
+  detailItemKey: null,
+  detail: null,
+  unsubscribe: null
+};
+
+const elements = {
+  screenTitle: document.getElementById('screen-title'),
+  overviewScreen: document.getElementById('overview-screen'),
+  detailScreen: document.getElementById('detail-screen'),
+  rangeTabs: [...document.querySelectorAll('.range-tab')],
+  previousDay: document.getElementById('previous-day'),
+  nextDay: document.getElementById('next-day'),
+  dateLabel: document.getElementById('date-label'),
+  chartSectionTitle: document.getElementById('chart-section-title'),
+  summaryDuration: document.getElementById('summary-duration'),
+  summarySubtitle: document.getElementById('summary-subtitle'),
+  chartCanvas: document.getElementById('usage-chart'),
+  chartTooltip: document.getElementById('chart-tooltip'),
+  rankingList: document.getElementById('ranking-list'),
+  bridgeUrlText: document.getElementById('bridge-url-text'),
+  refreshButton: document.getElementById('refresh-button'),
+  backButton: document.querySelector('.back-button'),
+  detailAvatar: document.getElementById('detail-avatar'),
+  detailTitle: document.getElementById('detail-title'),
+  detailSubtitle: document.getElementById('detail-subtitle'),
+  detailTodayDuration: document.getElementById('detail-today-duration'),
+  detailWeekAverage: document.getElementById('detail-week-average'),
+  detailWeekTotal: document.getElementById('detail-week-total'),
+  detailDayChart: document.getElementById('detail-day-chart'),
+  detailDayTooltip: document.getElementById('detail-day-tooltip'),
+  detailWeekChart: document.getElementById('detail-week-chart'),
+  detailWeekTooltip: document.getElementById('detail-week-tooltip'),
+  detailMeta: document.getElementById('detail-meta'),
+  itemTemplate: document.getElementById('ranking-item-template')
+};
+
+function formatDuration(ms, mode = 'long') {
+  const totalMinutes = Math.round((ms || 0) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (mode === 'short') {
+    if (hours > 0 && minutes > 0) {
+      return `${hours}小时${minutes}分钟`;
+    }
+
+    if (hours > 0) {
+      return `${hours}小时`;
+    }
+
+    return `${minutes}分钟`;
+  }
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours}小时${minutes}分钟`;
+  }
+
+  if (hours > 0) {
+    return `${hours}小时`;
+  }
+
+  return `${minutes}分钟`;
+}
+
+function formatDayLabel(dayKey) {
+  if (!dayKey) {
+    return '今天';
+  }
+
+  const date = new Date(`${dayKey}T00:00:00`);
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  if (dayKey === todayKey) {
+    return `${date.getMonth() + 1}月${date.getDate()}日（今天）`;
+  }
+
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function formatWeekRange(dayKeys) {
+  if (!dayKeys || !dayKeys.length) {
+    return '近 7 天';
+  }
+
+  const first = new Date(`${dayKeys[0]}T00:00:00`);
+  const last = new Date(`${dayKeys[dayKeys.length - 1]}T00:00:00`);
+  return `${first.getMonth() + 1}月${first.getDate()}日 - ${last.getMonth() + 1}月${last.getDate()}日`;
+}
+
+function weekdayLabel(dayKey) {
+  const value = new Date(`${dayKey}T00:00:00`).getDay();
+  return ['日', '一', '二', '三', '四', '五', '六'][value];
+}
+
+function getInitials(item) {
+  const label = item.label || item.appName || item.host || 'APP';
+  const filtered = label.replace(/[^A-Za-z0-9\u4e00-\u9fa5]/g, '').trim();
+  if (!filtered) {
+    return 'A';
+  }
+
+  if (/^[\u4e00-\u9fa5]+$/.test(filtered)) {
+    return filtered.slice(0, 2);
+  }
+
+  return filtered.slice(0, 2).toUpperCase();
+}
+
+function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }) {
+  const context = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = { top: 22, right: 44, bottom: 36, left: 8 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const maxValue = Math.max(...bars, 1);
+  const step = chartWidth / Math.max(bars.length, 1);
+  const barWidth = Math.min(14, step * 0.52);
+  const hitAreas = [];
+
+  context.clearRect(0, 0, width, height);
+  context.font = '12px Segoe UI';
+
+  context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  context.lineWidth = 1;
+  yLabels.forEach((value) => {
+    const y = padding.top + chartHeight * (1 - value.ratio);
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right + 4, y);
+    context.stroke();
+    context.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    context.textAlign = 'left';
+    context.fillText(value.label, width - padding.right + 10, y + 4);
+  });
+
+  bars.forEach((value, index) => {
+    const x = padding.left + step * index + (step - barWidth) / 2;
+    const barHeight = Math.max(4, (value / maxValue) * chartHeight);
+    const y = padding.top + chartHeight - barHeight;
+
+    context.fillStyle = color;
+    context.beginPath();
+    context.roundRect(x, y, barWidth, barHeight, 6);
+    context.fill();
+
+    const label = typeof labels === 'function' ? labels(index) : labels[index];
+    if (label) {
+      context.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      context.textAlign = 'center';
+      context.fillText(label, x + barWidth / 2, height - 8);
+    }
+    hitAreas.push({ x, y, width: barWidth, height: chartHeight, value, label: labels[index], index });
+  });
+
+  const pointerHandler = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const pointX = (event.clientX - rect.left) * scaleX;
+    const pointY = (event.clientY - rect.top) * scaleY;
+    const hit = hitAreas.find((area) => pointX >= area.x && pointX <= area.x + area.width && pointY >= padding.top && pointY <= padding.top + chartHeight);
+
+    if (hit) {
+      if (typeof onHover === 'function') {
+        onHover(hit, rect);
+      }
+    } else {
+      tooltip.classList.add('hidden');
+    }
+  };
+
+  canvas.onmousemove = pointerHandler;
+  canvas.onmouseleave = () => {
+    tooltip.classList.add('hidden');
+  };
+}
+
+function showTooltip(tooltip, rect, chartPoint, content) {
+  tooltip.innerHTML = content;
+  tooltip.classList.remove('hidden');
+  const relativeX = (chartPoint.x + chartPoint.width / 2) / rect.width;
+  const relativeY = chartPoint.y / rect.height;
+  tooltip.style.left = `${relativeX * 100}%`;
+  tooltip.style.top = `${Math.max(relativeY * 100 - 4, 15)}%`;
+}
+
+function lookupDay(dayKey) {
+  return state.snapshot?.daily?.days?.[dayKey] || {
+    totalMs: 0,
+    items: [],
+    hourly: new Array(24).fill(0)
+  };
+}
+
+function renderOverview() {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return;
+  }
+
+  const availableDays = snapshot.daily.availableDays;
+  if (!state.selectedDayKey) {
+    state.selectedDayKey = snapshot.meta.latestDayKey;
+  }
+
+  const activeDay = lookupDay(state.selectedDayKey);
+  const isDaily = state.selectedRange === 'daily';
+
+  elements.rangeTabs.forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.range === state.selectedRange);
+  });
+
+  elements.previousDay.style.visibility = isDaily ? 'visible' : 'hidden';
+  elements.nextDay.style.visibility = isDaily ? 'visible' : 'hidden';
+  elements.dateLabel.textContent = isDaily ? formatDayLabel(state.selectedDayKey) : formatWeekRange(snapshot.weekly.dayKeys);
+  elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
+  elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(snapshot.weekly.averageMs, 'short');
+  elements.summarySubtitle.textContent = isDaily
+    ? ''
+    : `总时长：${formatDuration(snapshot.weekly.totalMs)}`;
+  elements.bridgeUrlText.textContent = snapshot.meta.bridgeUrl;
+
+  const rankingItems = isDaily ? activeDay.items : snapshot.weekly.items;
+  renderRanking(rankingItems, isDaily ? activeDay.totalMs : snapshot.weekly.totalMs);
+
+  if (isDaily) {
+    const hourly = activeDay.hourly || snapshot.daily.hourly;
+    drawBarChart({
+      canvas: elements.chartCanvas,
+      bars: hourly.map((value) => Math.round(value / 60000)),
+      labels: (index) => ({ 0: '0 时', 6: '6 时', 12: '12 时', 18: '18 时' }[index] || ''),
+      yLabels: [
+        { ratio: 0, label: '0' },
+        { ratio: 0.5, label: '30 分钟' },
+        { ratio: 1, label: '60 分钟' }
+      ],
+      color: '#1a8dff',
+      tooltip: elements.chartTooltip,
+      onHover: (hit, rect) => {
+        const index = hit.index;
+        const hourLabel = `${index} 时 - ${index + 1} 时`;
+        const topItems = activeDay.items
+          .map((item) => ({
+            label: item.label,
+            initials: getInitials(item),
+            color: item.color,
+            minutes: Math.round(((item.hourly && item.hourly[index]) || 0) / 60000)
+          }))
+          .filter((item) => item.minutes > 0)
+          .sort((left, right) => right.minutes - left.minutes)
+          .slice(0, 3);
+
+        showTooltip(
+          elements.chartTooltip,
+          rect,
+          hit,
+          `
+            <span class="tooltip-value">${formatDuration(hit.value * 60000)}</span>
+            <span class="tooltip-label">${hourLabel}</span>
+            <div class="tooltip-list">
+              ${topItems
+                .map(
+                  (item) => `
+                    <div class="tooltip-row">
+                      <span class="tooltip-chip" style="background:${item.color}">${item.initials}</span>
+                      <span>${item.label} ${item.minutes}分钟</span>
+                    </div>`
+                )
+                .join('')}
+            </div>`
+        );
+      }
+    });
+  } else {
+    const totals = snapshot.weekly.dailyTotals.map((item) => Math.round(item.totalMs / 3600000 * 10) / 10);
+    drawBarChart({
+      canvas: elements.chartCanvas,
+      bars: totals,
+      labels: snapshot.weekly.dayKeys.map((dayKey) => weekdayLabel(dayKey)),
+      yLabels: [
+        { ratio: 0, label: '0' },
+        { ratio: 0.66, label: '平均' },
+        { ratio: 1, label: '12 小时' }
+      ],
+      color: '#1a8dff',
+      tooltip: elements.chartTooltip,
+      onHover: (hit, rect) => {
+        const dayKey = snapshot.weekly.dayKeys[hit.index];
+        const topItems = snapshot.weekly.items
+          .map((item) => ({
+            label: item.label,
+            initials: getInitials(item),
+            color: item.color,
+            duration: item.byDay?.[dayKey] || 0
+          }))
+          .filter((item) => item.duration > 0)
+          .sort((left, right) => right.duration - left.duration)
+          .slice(0, 3);
+
+        showTooltip(
+          elements.chartTooltip,
+          rect,
+          hit,
+          `
+            <span class="tooltip-value">${formatDuration(snapshot.weekly.dailyTotals[hit.index].totalMs)}</span>
+            <span class="tooltip-label">${formatDayLabel(dayKey)}</span>
+            <div class="tooltip-list">
+              ${topItems
+                .map(
+                  (item) => `
+                    <div class="tooltip-row">
+                      <span class="tooltip-chip" style="background:${item.color}">${item.initials}</span>
+                      <span>${item.label} ${formatDuration(item.duration, 'short')}</span>
+                    </div>`
+                )
+                .join('')}
+            </div>`
+        );
+      }
+    });
+  }
+
+  highlightScreen('overview');
+}
+
+function renderRanking(items, totalMs) {
+  elements.rankingList.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ranking-subtitle';
+    empty.textContent = '当前还没有采集到使用数据。';
+    elements.rankingList.appendChild(empty);
+    return;
+  }
+
+  items.slice(0, 8).forEach((item) => {
+    const fragment = elements.itemTemplate.content.cloneNode(true);
+    const button = fragment.querySelector('.ranking-item');
+    const avatar = fragment.querySelector('.app-avatar');
+    const name = fragment.querySelector('.ranking-name');
+    const duration = fragment.querySelector('.ranking-duration');
+    const subtitle = fragment.querySelector('.ranking-subtitle');
+    const progress = fragment.querySelector('.progress-bar');
+    const ratio = totalMs ? Math.max(item.totalMs / totalMs, 0.04) : 0;
+
+    avatar.textContent = getInitials(item);
+    avatar.style.background = item.color;
+    name.textContent = item.label;
+    duration.textContent = formatDuration(item.totalMs, 'short');
+    subtitle.textContent = item.url || item.subtitle || item.windowTitle || item.appName;
+    progress.style.width = `${Math.round(ratio * 100)}%`;
+    progress.style.background = `linear-gradient(90deg, ${item.color}, #2ca9ff)`;
+    button.addEventListener('click', () => openDetail(item.key));
+    elements.rankingList.appendChild(fragment);
+  });
+}
+
+function renderDetail() {
+  const detail = state.detail;
+  if (!detail) {
+    return;
+  }
+
+  elements.detailAvatar.textContent = getInitials(detail);
+  elements.detailAvatar.style.background = detail.color;
+  elements.detailTitle.textContent = detail.label;
+  elements.detailSubtitle.textContent = detail.kind === 'page'
+    ? detail.url || detail.host
+    : detail.appName;
+  elements.detailTodayDuration.textContent = formatDuration(detail.todayHourly.reduce((sum, item) => sum + item, 0));
+  elements.detailWeekAverage.textContent = `日均 ${formatDuration(detail.averageMs, 'short')}`;
+  elements.detailWeekTotal.textContent = `总时长：${formatDuration(detail.totalMs)}`;
+
+  elements.detailMeta.innerHTML = '';
+  [
+    ['应用', detail.appName],
+    ['页面标题', detail.pageTitle || detail.windowTitle],
+    ['网页地址', detail.url],
+    ['域名', detail.host],
+    ['可执行文件', detail.executablePath]
+  ]
+    .filter(([, value]) => value)
+    .forEach(([label, value]) => {
+      const row = document.createElement('div');
+      row.className = 'metadata-row';
+      row.innerHTML = `<div class="metadata-label">${label}</div><div class="metadata-value">${value}</div>`;
+      elements.detailMeta.appendChild(row);
+    });
+
+  drawBarChart({
+    canvas: elements.detailDayChart,
+    bars: detail.todayHourly.map((value) => Math.round(value / 60000)),
+      labels: (index) => ({ 0: '0', 6: '6', 12: '12', 18: '18' }[index] || ''),
+    yLabels: [
+      { ratio: 0, label: '0' },
+      { ratio: 0.5, label: '30 分钟' },
+      { ratio: 1, label: '60 分钟' }
+    ],
+    color: detail.color,
+    tooltip: elements.detailDayTooltip,
+    onHover: (hit, rect) => {
+      showTooltip(
+        elements.detailDayTooltip,
+        rect,
+        hit,
+        `<span class="tooltip-value">${formatDuration(hit.value * 60000)}</span><span class="tooltip-label">${hit.index} 时 - ${hit.index + 1} 时</span>`
+      );
+    }
+  });
+
+  drawBarChart({
+    canvas: elements.detailWeekChart,
+    bars: detail.lastSevenDays.map((item) => Math.round(item.totalMs / 60000)),
+    labels: detail.lastSevenDays.map((item) => weekdayLabel(item.dayKey)),
+    yLabels: [
+      { ratio: 0, label: '0' },
+      { ratio: 0.5, label: '平均' },
+      { ratio: 1, label: '120 分钟' }
+    ],
+    color: detail.color,
+    tooltip: elements.detailWeekTooltip,
+    onHover: (hit, rect) => {
+      const day = detail.lastSevenDays[hit.index];
+      showTooltip(
+        elements.detailWeekTooltip,
+        rect,
+        hit,
+        `<span class="tooltip-value">${formatDuration(day.totalMs)}</span><span class="tooltip-label">${formatDayLabel(day.dayKey)}</span>`
+      );
+    }
+  });
+
+  highlightScreen('detail');
+}
+
+function highlightScreen(screen) {
+  const isDetail = screen === 'detail';
+  elements.overviewScreen.classList.toggle('active', !isDetail);
+  elements.detailScreen.classList.toggle('active', isDetail);
+  elements.screenTitle.textContent = isDetail ? detailTitleText() : '使用统计';
+}
+
+function detailTitleText() {
+  return state.detail ? state.detail.label : '使用统计';
+}
+
+async function openDetail(itemKey) {
+  state.detailItemKey = itemKey;
+  state.detail = await window.usageApi.getDetail(itemKey);
+  renderDetail();
+}
+
+function closeDetail() {
+  state.detailItemKey = null;
+  state.detail = null;
+  renderOverview();
+}
+
+function bindEvents() {
+  elements.rangeTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      state.selectedRange = tab.dataset.range;
+      renderOverview();
+    });
+  });
+
+  elements.previousDay.addEventListener('click', () => {
+    if (!state.snapshot || state.selectedRange !== 'daily') {
+      return;
+    }
+
+    const days = state.snapshot.daily.availableDays;
+    const currentIndex = days.indexOf(state.selectedDayKey);
+    if (currentIndex > 0) {
+      state.selectedDayKey = days[currentIndex - 1];
+      renderOverview();
+    }
+  });
+
+  elements.nextDay.addEventListener('click', () => {
+    if (!state.snapshot || state.selectedRange !== 'daily') {
+      return;
+    }
+
+    const days = state.snapshot.daily.availableDays;
+    const currentIndex = days.indexOf(state.selectedDayKey);
+    if (currentIndex < days.length - 1) {
+      state.selectedDayKey = days[currentIndex + 1];
+      renderOverview();
+    }
+  });
+
+  elements.refreshButton.addEventListener('click', async () => {
+    state.snapshot = await window.usageApi.forcePoll();
+    renderOverview();
+  });
+
+  elements.backButton.addEventListener('click', () => {
+    if (state.detailItemKey) {
+      closeDetail();
+    }
+  });
+}
+
+async function bootstrap() {
+  bindEvents();
+  state.snapshot = await window.usageApi.getSnapshot();
+  if (state.snapshot) {
+    state.selectedDayKey = state.snapshot.meta.latestDayKey;
+  }
+
+  renderOverview();
+  state.unsubscribe = window.usageApi.onDataChanged((snapshot) => {
+    state.snapshot = snapshot;
+    if (!state.selectedDayKey) {
+      state.selectedDayKey = snapshot.meta.latestDayKey;
+    }
+
+    if (state.detailItemKey) {
+      openDetail(state.detailItemKey);
+    } else {
+      renderOverview();
+    }
+  });
+}
+
+bootstrap();
