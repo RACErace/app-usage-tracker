@@ -208,6 +208,10 @@ function ensureSelectedDayKey() {
 }
 
 function getRankingSubtitle(item) {
+  if (item.kind === 'service') {
+    return item.subtitle || item.host || item.appName || '';
+  }
+
   if (item.kind === 'site') {
     return item.host || item.subtitle || item.appName || '';
   }
@@ -222,6 +226,10 @@ function getRankingSubtitle(item) {
 function getDetailSubtitle(detail) {
   if (!detail) {
     return '';
+  }
+
+  if (detail.kind === 'service') {
+    return detail.host || detail.subtitle || detail.appName || '';
   }
 
   if (detail.kind === 'site') {
@@ -517,7 +525,15 @@ function renderDetail() {
   elements.detailWeekTotal.textContent = `总时长：${formatDuration(detail.totalMs)}`;
 
   elements.detailMeta.innerHTML = '';
-  const metaRows = detail.kind === 'site'
+  const metaRows = detail.kind === 'service'
+    ? [
+        ['服务', detail.label],
+        ['站点域名', detail.host],
+        ['最近内容标题', detail.pageTitle || detail.windowTitle],
+        ['最近网页地址', detail.url],
+        ['本地应用可执行文件', detail.executablePath]
+      ]
+    : detail.kind === 'site'
     ? [
         ['应用', detail.appName],
         ['站点域名', detail.host],
