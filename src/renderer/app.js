@@ -1,5 +1,6 @@
 const state = {
   snapshot: null,
+  settings: null,
   selectedRange: 'daily',
   selectedDayKey: null,
   detailItemKey: null,
@@ -22,6 +23,8 @@ const elements = {
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
   bridgeUrlText: document.getElementById('bridge-url-text'),
+  autoLaunchStatus: document.getElementById('auto-launch-status'),
+  autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   refreshButton: document.getElementById('refresh-button'),
   backButton: document.querySelector('.back-button'),
   detailAvatar: document.getElementById('detail-avatar'),
@@ -37,6 +40,13 @@ const elements = {
   detailMeta: document.getElementById('detail-meta'),
   itemTemplate: document.getElementById('ranking-item-template')
 };
+
+function renderSettings() {
+  const enabled = Boolean(state.settings?.autoLaunchEnabled);
+  elements.autoLaunchStatus.textContent = enabled ? '已开启' : '未开启';
+  elements.autoLaunchStatus.classList.toggle('active', enabled);
+  elements.autoLaunchToggle.textContent = enabled ? '关闭开机自启动' : '开启开机自启动';
+}
 
 function formatDuration(ms, mode = 'long') {
   const totalMinutes = Math.round((ms || 0) / 60000);
@@ -224,6 +234,7 @@ function renderOverview() {
     ? ''
     : `总时长：${formatDuration(snapshot.weekly.totalMs)}`;
   elements.bridgeUrlText.textContent = snapshot.meta.bridgeUrl;
+  renderSettings();
 
   const rankingItems = isDaily ? activeDay.items : snapshot.weekly.items;
   renderRanking(rankingItems, isDaily ? activeDay.totalMs : snapshot.weekly.totalMs);
@@ -500,6 +511,17 @@ function bindEvents() {
     renderOverview();
   });
 
+  elements.autoLaunchToggle.addEventListener('click', async () => {
+    const nextValue = !Boolean(state.settings?.autoLaunchEnabled);
+    elements.autoLaunchToggle.disabled = true;
+    try {
+      state.settings = await window.usageApi.setAutoLaunch(nextValue);
+      renderSettings();
+    } finally {
+      elements.autoLaunchToggle.disabled = false;
+    }
+  });
+
   elements.backButton.addEventListener('click', () => {
     if (state.detailItemKey) {
       closeDetail();
@@ -509,7 +531,10 @@ function bindEvents() {
 
 async function bootstrap() {
   bindEvents();
-  state.snapshot = await window.usageApi.getSnapshot();
+  [state.snapshot, state.settings] = await Promise.all([
+    window.usageApi.getSnapshot(),
+    window.usageApi.getSettings()
+  ]);
   if (state.snapshot) {
     state.selectedDayKey = state.snapshot.meta.latestDayKey;
   }
@@ -526,6 +551,11 @@ async function bootstrap() {
     } else {
       renderOverview();
     }
+  });
+
+  window.usageApi.onSettingsChanged((settings) => {
+    state.settings = settings;
+    renderSettings();
   });
 }
 

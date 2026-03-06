@@ -422,6 +422,57 @@ canvas {
   line-height: 1.5;
 }
 
+.settings-card {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-description {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 84px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-pill.active {
+  background: rgba(26, 141, 255, 0.18);
+  color: #72baff;
+}
+
+.settings-toggle {
+  height: 46px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(240, 138, 159, 0.95), rgba(255, 166, 129, 0.95));
+  color: #14090d;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.settings-toggle:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .bridge-hint {
   margin-top: 10px !important;
   color: var(--muted);

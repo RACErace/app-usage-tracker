@@ -73,6 +73,17 @@
             </div>
             <p class="bridge-hint">要拿到具体网页 URL，需要把 browser-extension 目录作为 Chrome 或 Edge 的开发者扩展加载。</p>
           </section>
+
+          <section class="bridge-card settings-card" id="settings-card">
+            <div class="settings-row">
+              <div>
+                <h3>开机自启动</h3>
+                <p class="settings-description">当前状态会和托盘菜单保持同步。</p>
+              </div>
+              <span class="status-pill" id="auto-launch-status">读取中</span>
+            </div>
+            <button class="settings-toggle" type="button" id="auto-launch-toggle">切换状态</button>
+          </section>
         </section>
 
         <section class="screen" id="detail-screen">

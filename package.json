@@ -14,6 +14,7 @@
     "files": [
       "src/**/*",
       "browser-extension/**/*",
+      "app.ico",
       "README.md",
       "package.json"
     ],
@@ -21,6 +22,7 @@
       "buildResources": "assets"
     },
     "win": {
+      "icon": "app.ico",
       "target": "nsis"
     }
   },
