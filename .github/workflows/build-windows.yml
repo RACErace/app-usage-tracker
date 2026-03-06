@@ -25,8 +25,20 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Configure node-gyp Python
+        shell: pwsh
+        run: |
+          $pythonExe = Join-Path $env:pythonLocation 'python.exe'
+          "PYTHON=$pythonExe" >> $env:GITHUB_ENV
+          "npm_config_python=$pythonExe" >> $env:GITHUB_ENV
 
       - name: Read package version
         id: version
