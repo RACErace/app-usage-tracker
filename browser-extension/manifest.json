@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Usage Tracker Bridge",
+  "version": "1.0.0",
+  "description": "将当前浏览器活动标签页 URL 发送给桌面端使用统计应用。",
+  "permissions": [
+    "tabs",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:32123/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Usage Tracker Bridge"
+  }
+}

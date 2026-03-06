@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>使用统计</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="icon-button back-button" type="button" aria-label="返回">‹</button>
+        <div>
+          <h1 class="screen-title" id="screen-title">使用统计</h1>
+        </div>
+        <button class="text-button" type="button" id="device-button">设备</button>
+      </header>
+
+      <main class="content-area">
+        <section class="screen active" id="overview-screen">
+          <div class="tab-row" id="range-tabs">
+            <button class="range-tab active" type="button" data-range="daily">每天</button>
+            <button class="range-tab" type="button" data-range="weekly">近 7 天</button>
+          </div>
+
+          <section class="date-strip">
+            <button class="pill-button" type="button" id="previous-day">‹</button>
+            <div class="date-label" id="date-label">今天</div>
+            <button class="pill-button" type="button" id="next-day">›</button>
+          </section>
+
+          <section class="section-block">
+            <div class="section-title-row">
+              <h2 class="section-title" id="chart-section-title">使用时长（截至今天）</h2>
+            </div>
+
+            <article class="card chart-card">
+              <div class="card-header">
+                <div>
+                  <div class="big-metric" id="summary-duration">0 分钟</div>
+                  <div class="sub-metric" id="summary-subtitle"></div>
+                </div>
+                <button class="icon-button info-button" type="button" id="refresh-button" aria-label="刷新">i</button>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="usage-chart" width="340" height="240"></canvas>
+                <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+              </div>
+
+              <div class="chart-legend" id="chart-legend">
+                <span class="legend-dot"></span>
+                <span class="legend-label">当前设备</span>
+              </div>
+            </article>
+          </section>
+
+          <section class="section-block">
+            <div class="section-title-row">
+              <h2 class="section-title">使用排行</h2>
+              <button class="text-button inline-button" type="button" id="category-button">显示类别</button>
+            </div>
+
+            <article class="card list-card">
+              <div id="ranking-list" class="ranking-list"></div>
+            </article>
+          </section>
+
+          <section class="bridge-card" id="bridge-card">
+            <div>
+              <h3>浏览器网页识别</h3>
+              <p id="bridge-url-text"></p>
+            </div>
+            <p class="bridge-hint">要拿到具体网页 URL，需要把 browser-extension 目录作为 Chrome 或 Edge 的开发者扩展加载。</p>
+          </section>
+        </section>
+
+        <section class="screen" id="detail-screen">
+          <section class="section-block detail-heading">
+            <div class="detail-app-chip" id="detail-avatar"></div>
+            <div>
+              <h2 class="detail-title" id="detail-title">应用详情</h2>
+              <p class="detail-subtitle" id="detail-subtitle"></p>
+            </div>
+          </section>
+
+          <section class="section-block">
+            <h2 class="section-title">使用时长（截至今天）</h2>
+            <article class="card chart-card detail-card">
+              <div class="card-header">
+                <div class="big-metric" id="detail-today-duration">0 分钟</div>
+              </div>
+              <div class="chart-wrap detail-chart-wrap">
+                <canvas id="detail-day-chart" width="340" height="220"></canvas>
+                <div class="chart-tooltip hidden" id="detail-day-tooltip"></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="section-block">
+            <h2 class="section-title">近 7 天使用时长</h2>
+            <article class="card chart-card detail-card">
+              <div class="card-header stacked">
+                <div class="big-metric" id="detail-week-average">0 分钟</div>
+                <div class="sub-metric" id="detail-week-total"></div>
+              </div>
+              <div class="chart-wrap detail-chart-wrap">
+                <canvas id="detail-week-chart" width="340" height="220"></canvas>
+                <div class="chart-tooltip hidden" id="detail-week-tooltip"></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="section-block">
+            <article class="card metadata-card" id="detail-meta"></article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <template id="ranking-item-template">
+      <button class="ranking-item" type="button">
+        <div class="app-avatar"></div>
+        <div class="ranking-main">
+          <div class="ranking-topline">
+            <span class="ranking-name"></span>
+            <span class="ranking-duration"></span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar"></div>
+          </div>
+          <div class="ranking-subtitle"></div>
+        </div>
+        <span class="chevron">›</span>
+      </button>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+  </html>
