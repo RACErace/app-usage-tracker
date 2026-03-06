@@ -92,7 +92,21 @@ function cloneItem(item) {
 
 async function getActiveWindow() {
   if (!activeWinLoader) {
-    activeWinLoader = import('active-win').then((module) => module.default || module);
+    activeWinLoader = import('active-win').then((module) => {
+      if (typeof module.activeWindow === 'function') {
+        return module.activeWindow;
+      }
+
+      if (module.default && typeof module.default.activeWindow === 'function') {
+        return module.default.activeWindow;
+      }
+
+      if (typeof module.default === 'function') {
+        return module.default;
+      }
+
+      throw new Error('active-win 导出格式不符合预期');
+    });
   }
 
   const resolver = await activeWinLoader;
