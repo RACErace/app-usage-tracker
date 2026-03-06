@@ -150,10 +150,10 @@ function createTray() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 430,
-    height: 920,
-    minWidth: 410,
-    minHeight: 840,
+    width: 1120,
+    height: 860,
+    minWidth: 520,
+    minHeight: 680,
     backgroundColor: '#050507',
     autoHideMenuBar: true,
     title: '使用统计',
