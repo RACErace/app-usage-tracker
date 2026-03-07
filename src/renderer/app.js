@@ -374,11 +374,36 @@ function getDetailSubtitle(detail) {
   return detail.appName || '';
 }
 
+function getCanvasMetrics(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const fallbackWidth = Number(canvas.getAttribute('width')) || 340;
+  const fallbackHeight = Number(canvas.getAttribute('height')) || 240;
+  const aspectRatio = fallbackHeight / fallbackWidth;
+  const cssWidth = Math.max(Math.round(canvas.getBoundingClientRect().width || canvas.clientWidth || fallbackWidth), 1);
+  const cssHeight = Math.max(Math.round(cssWidth * aspectRatio), 1);
+  const pixelWidth = Math.max(Math.round(cssWidth * ratio), 1);
+  const pixelHeight = Math.max(Math.round(cssHeight * ratio), 1);
+
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  if (canvas.style.height !== `${cssHeight}px`) {
+    canvas.style.height = `${cssHeight}px`;
+  }
+
+  return {
+    ratio,
+    width: cssWidth,
+    height: cssHeight
+  };
+}
+
 function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }) {
   const context = canvas.getContext('2d');
-  const width = canvas.width;
-  const height = canvas.height;
-  const padding = { top: 22, right: 44, bottom: 36, left: 8 };
+  const { ratio, width, height } = getCanvasMetrics(canvas);
+  const padding = { top: 14, right: 72, bottom: 30, left: 8 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const maxValue = Math.max(...bars, 1);
@@ -386,8 +411,11 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
   const barWidth = Math.min(14, step * 0.52);
   const hitAreas = [];
 
-  context.clearRect(0, 0, width, height);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.font = '12px Segoe UI';
+  context.textBaseline = 'middle';
 
   context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
   context.lineWidth = 1;
@@ -399,7 +427,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     context.stroke();
     context.fillStyle = 'rgba(255, 255, 255, 0.45)';
     context.textAlign = 'left';
-    context.fillText(value.label, width - padding.right + 10, y + 4);
+    context.fillText(value.label, width - padding.right + 12, y);
   });
 
   bars.forEach((value, index) => {
@@ -416,7 +444,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     if (label) {
       context.fillStyle = 'rgba(255, 255, 255, 0.5)';
       context.textAlign = 'center';
-      context.fillText(label, x + barWidth / 2, height - 8);
+      context.fillText(label, x + barWidth / 2, height - 10);
     }
 
     hitAreas.push({ x, y, width: barWidth, height: chartHeight, value, label, index });
@@ -464,7 +492,7 @@ function updateHeader() {
     ? (state.detail?.label || '详情')
     : state.activeScreen === 'settings'
       ? '设置'
-      : '使用统计';
+      : '';
 }
 
 function showScreen(screen) {

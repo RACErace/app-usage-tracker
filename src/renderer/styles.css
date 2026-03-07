@@ -45,15 +45,14 @@ button {
 .app-shell {
   width: min(100%, 1280px);
   min-height: 100vh;
-  padding: clamp(18px, 3vw, 32px);
+  padding: clamp(14px, 2.4vw, 26px);
 }
 
 .topbar {
   display: grid;
-  grid-template-columns: 52px 1fr 72px;
+  grid-template-columns: 44px 1fr 60px;
   align-items: center;
-  gap: 12px;
-  padding-top: 4px;
+  gap: 8px;
 }
 
 .title-block {
@@ -69,9 +68,9 @@ button {
 }
 
 .back-button {
-  font-size: 48px;
+  font-size: 40px;
   line-height: 1;
-  width: 44px;
+  width: 40px;
   padding: 0;
 }
 
@@ -82,8 +81,12 @@ button {
 
 .screen-title {
   margin: 0;
-  font-size: clamp(24px, 3vw, 30px);
+  font-size: clamp(22px, 2.8vw, 28px);
   font-weight: 700;
+}
+
+.screen-title:empty {
+  display: none;
 }
 
 .text-button {
@@ -91,9 +94,10 @@ button {
   border: 0;
   background: transparent;
   color: var(--accent);
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  line-height: 1.2;
 }
 
 .text-button.hidden-action {
@@ -103,7 +107,7 @@ button {
 
 .content-area {
   position: relative;
-  margin-top: 6px;
+  margin-top: 0;
 }
 
 .screen {
@@ -118,17 +122,17 @@ button {
 .tab-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 28px;
+  margin-top: 14px;
   align-items: end;
 }
 
 .range-tab {
   position: relative;
-  padding: 16px 0 12px;
+  padding: 10px 0 8px;
   border: 0;
   background: transparent;
   color: rgba(245, 245, 247, 0.46);
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -154,7 +158,7 @@ button {
   grid-template-columns: 56px minmax(0, 1fr) 56px;
   align-items: center;
   gap: 16px;
-  margin-top: 26px;
+  margin-top: 16px;
 }
 
 .pill-button {
@@ -181,11 +185,11 @@ button {
 .settings-stack,
 .info-stack {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 
 .section-block {
-  margin-top: 28px;
+  margin-top: 20px;
 }
 
 .section-title-row {
@@ -257,11 +261,11 @@ button {
 
 .chart-wrap {
   position: relative;
-  margin-top: 18px;
+  margin-top: 10px;
 }
 
 .detail-chart-wrap {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 canvas {
@@ -757,11 +761,11 @@ canvas {
 
 @media (min-width: 1200px) {
   .topbar {
-    grid-template-columns: 52px 1fr 88px;
+    grid-template-columns: 44px 1fr 68px;
   }
 
   .screen-title {
-    font-size: 32px;
+    font-size: 28px;
   }
 }
 
@@ -793,13 +797,13 @@ canvas {
   .tab-row,
   .date-strip,
   .section-block {
-    margin-top: 18px;
+    margin-top: 14px;
   }
 
   .overview-grid,
   .detail-grid,
   .settings-layout,
   .info-stack {
-    gap: 18px;
+    gap: 16px;
   }
 }

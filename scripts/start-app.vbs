@@ -16,6 +16,6 @@ If Not fso.FileExists(nodePath) Then
   nodePath = "node"
 End If
 
-command = Chr(34) & nodePath & Chr(34) & " " & Chr(34) & fso.BuildPath(scriptDir, "start-detached.js") & Chr(34)
+command = Chr(34) & nodePath & Chr(34) & " " & Chr(34) & fso.BuildPath(scriptDir, "start-detached.js") & Chr(34) & " --show-window"
 shell.CurrentDirectory = appRoot
 shell.Run command, 0, False
