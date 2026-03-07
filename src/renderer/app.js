@@ -27,7 +27,7 @@ const elements = {
   chartCanvas: document.getElementById('usage-chart'),
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
-  bridgeUrlText: document.getElementById('bridge-url-text'),
+  settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
   refreshButton: document.getElementById('refresh-button'),
   backButton: document.getElementById('back-button'),
   detailAvatar: document.getElementById('detail-avatar'),
@@ -588,7 +588,7 @@ function renderOverview() {
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
   elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(weekly.averageMs, 'short');
   elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(weekly.totalMs)}`;
-  elements.bridgeUrlText.textContent = snapshot.meta.bridgeUrl;
+  elements.settingsBridgeUrlText.textContent = snapshot.meta.bridgeUrl;
 
   renderRanking(rankingItems, totalMs);
   renderSettingsState();
