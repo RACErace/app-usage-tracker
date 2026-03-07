@@ -3,12 +3,15 @@ const path = require('path');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
+const LOGIN_HIDDEN_ARG = '--launch-hidden';
+
 let mainWindow;
 let usageTracker;
 let tray;
 let isQuitting = false;
 let autoLaunchEnabled = false;
 let usageIconService;
+let shouldLaunchHidden = false;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -16,23 +19,28 @@ if (!gotSingleInstanceLock) {
 }
 
 function getLoginItemOptions(enabled) {
-  if (process.platform !== 'win32') {
-    return { openAtLogin: enabled };
-  }
-
-  if (app.isPackaged) {
+  if (process.platform === 'darwin') {
     return {
       openAtLogin: enabled,
       openAsHidden: true
     };
   }
 
-  return {
+  if (process.platform !== 'win32') {
+    return { openAtLogin: enabled };
+  }
+
+  const options = {
     openAtLogin: enabled,
-    openAsHidden: true,
     path: process.execPath,
-    args: [app.getAppPath()]
+    args: app.isPackaged ? [LOGIN_HIDDEN_ARG] : [app.getAppPath(), LOGIN_HIDDEN_ARG]
   };
+
+  return options;
+}
+
+function isHiddenLaunch() {
+  return process.argv.includes(LOGIN_HIDDEN_ARG);
 }
 
 function readAutoLaunchState() {
@@ -156,6 +164,7 @@ function createWindow() {
     height: 860,
     minWidth: 520,
     minHeight: 680,
+    show: !shouldLaunchHidden,
     backgroundColor: '#050507',
     autoHideMenuBar: true,
     title: '使用统计',
@@ -191,10 +200,16 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  updateTrayMenu();
 }
 
 async function bootstrap() {
+  shouldLaunchHidden = isHiddenLaunch();
   autoLaunchEnabled = readAutoLaunchState();
+  if (autoLaunchEnabled) {
+    app.setLoginItemSettings(getLoginItemOptions(true));
+  }
   usageIconService = new UsageIconService();
 
   usageTracker = new UsageTracker({
