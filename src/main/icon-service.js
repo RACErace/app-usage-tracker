@@ -4,6 +4,15 @@ const { app, nativeImage } = require('electron');
 
 const ICON_FETCH_TIMEOUT_MS = 6000;
 const NULL_CACHE_TTL_MS = 5 * 60 * 1000;
+const PREFERRED_ICON_SIZE = 64;
+
+function sanitizeText(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim();
+}
 
 function toDataUrl(image) {
   if (!image || image.isEmpty()) {
@@ -34,6 +43,184 @@ async function fileExists(filePath) {
   } catch {
     return false;
   }
+}
+
+function decodeHtmlAttribute(value) {
+  return sanitizeText(value)
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function extractHtmlAttribute(tag, attributeName) {
+  const pattern = new RegExp(`${attributeName}\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))`, 'i');
+  const match = tag.match(pattern);
+  if (!match) {
+    return '';
+  }
+
+  return decodeHtmlAttribute(match[1] || match[2] || match[3] || '');
+}
+
+function getIconLinkScore(relValue) {
+  const rel = sanitizeText(relValue).toLowerCase();
+  if (!rel) {
+    return -1;
+  }
+
+  if (rel.includes('apple-touch-icon')) {
+    return 5;
+  }
+
+  if (rel.includes('shortcut icon')) {
+    return 4;
+  }
+
+  if (rel.split(/\s+/).includes('icon')) {
+    return 3;
+  }
+
+  if (rel.includes('mask-icon')) {
+    return 2;
+  }
+
+  return -1;
+}
+
+function isSvgIconHref(href) {
+  return /\.svg(?:$|[?#])/i.test(sanitizeText(href));
+}
+
+function parseIconSizes(sizesValue) {
+  const rawValue = sanitizeText(sizesValue).toLowerCase();
+  if (!rawValue) {
+    return [];
+  }
+
+  if (rawValue.includes('any')) {
+    return ['any'];
+  }
+
+  const parsedSizes = [];
+  for (const part of rawValue.split(/\s+/)) {
+    const match = part.match(/^(\d+)x(\d+)$/);
+    if (!match) {
+      continue;
+    }
+
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (!width || !height) {
+      continue;
+    }
+
+    parsedSizes.push(Math.min(width, height));
+  }
+
+  return parsedSizes;
+}
+
+function getSizeFitness(size) {
+  if (size === 'any') {
+    return { tier: 4, distance: 0, sizeValue: PREFERRED_ICON_SIZE };
+  }
+
+  const numericSize = Number(size) || 0;
+  if (!numericSize) {
+    return { tier: 0, distance: Number.MAX_SAFE_INTEGER, sizeValue: 0 };
+  }
+
+  if (numericSize === PREFERRED_ICON_SIZE) {
+    return { tier: 3, distance: 0, sizeValue: numericSize };
+  }
+
+  if (numericSize > PREFERRED_ICON_SIZE) {
+    return { tier: 2, distance: numericSize - PREFERRED_ICON_SIZE, sizeValue: numericSize };
+  }
+
+  return { tier: 1, distance: PREFERRED_ICON_SIZE - numericSize, sizeValue: numericSize };
+}
+
+function getBestIconSizeMetrics(sizesValue, href) {
+  if (isSvgIconHref(href)) {
+    return { tier: 4, distance: 0, sizeValue: PREFERRED_ICON_SIZE };
+  }
+
+  const sizes = parseIconSizes(sizesValue);
+  if (!sizes.length) {
+    return { tier: 0, distance: Number.MAX_SAFE_INTEGER, sizeValue: 0 };
+  }
+
+  return sizes
+    .map((size) => getSizeFitness(size))
+    .sort((left, right) => {
+      if (left.tier !== right.tier) {
+        return right.tier - left.tier;
+      }
+
+      if (left.distance !== right.distance) {
+        return left.distance - right.distance;
+      }
+
+      return right.sizeValue - left.sizeValue;
+    })[0];
+}
+
+function resolveHtmlIconCandidates(html, pageUrl) {
+  const sourceHtml = sanitizeText(html);
+  if (!sourceHtml) {
+    return [];
+  }
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(pageUrl);
+  } catch {
+    return [];
+  }
+
+  const linkTags = sourceHtml.match(/<link\b[^>]*>/gi) || [];
+  const iconLinks = linkTags
+    .map((tag) => {
+      const rel = extractHtmlAttribute(tag, 'rel');
+      const href = extractHtmlAttribute(tag, 'href');
+      const sizes = extractHtmlAttribute(tag, 'sizes');
+      return {
+        relScore: getIconLinkScore(rel),
+        sizeMetrics: getBestIconSizeMetrics(sizes, href),
+        href
+      };
+    })
+    .filter((item) => item.relScore >= 0 && item.href);
+
+  const sortedLinks = iconLinks.sort((left, right) => {
+    if (left.sizeMetrics.tier !== right.sizeMetrics.tier) {
+      return right.sizeMetrics.tier - left.sizeMetrics.tier;
+    }
+
+    if (left.sizeMetrics.distance !== right.sizeMetrics.distance) {
+      return left.sizeMetrics.distance - right.sizeMetrics.distance;
+    }
+
+    if (left.relScore !== right.relScore) {
+      return right.relScore - left.relScore;
+    }
+
+    return right.sizeMetrics.sizeValue - left.sizeMetrics.sizeValue;
+  });
+  const resolved = [];
+
+  for (const item of sortedLinks) {
+    try {
+      resolved.push(new URL(item.href, baseUrl).toString());
+    } catch {
+      // ignore malformed href
+    }
+  }
+
+  return [...new Set(resolved)];
 }
 
 class UsageIconService {
@@ -105,7 +292,7 @@ class UsageIconService {
   }
 
   async resolveWebsiteIcon(item) {
-    const candidates = this.getWebsiteCandidates(item);
+    const candidates = await this.getWebsiteCandidates(item);
     for (const candidate of candidates) {
       const icon = await this.getCached(`url:${candidate}`, () => this.fetchImageDataUrl(candidate));
       if (icon) {
@@ -116,28 +303,46 @@ class UsageIconService {
     return null;
   }
 
-  getWebsiteCandidates(item) {
-    const candidates = [];
+  async getWebsiteCandidates(item) {
+    const htmlCandidates = [];
+    const directCandidates = [];
+    const fallbackCandidates = [];
 
     if (item.url) {
       try {
         const url = new URL(item.url);
-        candidates.push(new URL('/favicon.ico', url.origin).toString());
-        candidates.push(`https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`);
+        htmlCandidates.push(...(await this.getHtmlIconCandidates(url.toString())));
+        htmlCandidates.push(...(await this.getHtmlIconCandidates(url.origin)));
+        directCandidates.push(new URL('/favicon.ico', url.origin).toString());
+        fallbackCandidates.push(`https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(url.origin)}`);
       } catch {
         // ignore
       }
     }
 
     if (item.host) {
-      const normalizedHost = String(item.host).trim();
+      const normalizedHost = sanitizeText(item.host);
       if (normalizedHost) {
-        candidates.push(`https://${normalizedHost}/favicon.ico`);
-        candidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(normalizedHost)}`);
+        htmlCandidates.push(...(await this.getHtmlIconCandidates(`https://${normalizedHost}/`)));
+        directCandidates.push(`https://${normalizedHost}/favicon.ico`);
+        fallbackCandidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(normalizedHost)}`);
       }
     }
 
-    return [...new Set(candidates)];
+    return [...new Set([...htmlCandidates, ...directCandidates, ...fallbackCandidates])];
+  }
+
+  async getHtmlIconCandidates(pageUrl) {
+    if (!pageUrl) {
+      return [];
+    }
+
+    const html = await this.getCached(`html:${pageUrl}`, () => this.fetchHtml(pageUrl));
+    if (!html) {
+      return [];
+    }
+
+    return resolveHtmlIconCandidates(html, pageUrl);
   }
 
   async fetchImageDataUrl(url) {
@@ -183,6 +388,51 @@ class UsageIconService {
 
       const image = nativeImage.createFromBuffer(buffer);
       return toDataUrl(image);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async fetchHtml(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ICON_FETCH_TIMEOUT_MS);
+
+    try {
+      let referer = '';
+      let origin = '';
+      try {
+        const targetUrl = new URL(url);
+        origin = targetUrl.origin;
+        referer = `${targetUrl.origin}/`;
+      } catch {
+        // ignore
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          ...(origin ? { Origin: origin } : {}),
+          ...(referer ? { Referer: referer } : {})
+        }
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+        return null;
+      }
+
+      const html = await response.text();
+      return sanitizeText(html) || null;
     } catch {
       return null;
     } finally {

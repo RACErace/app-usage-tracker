@@ -178,6 +178,7 @@ button {
 .overview-grid,
 .detail-grid,
 .settings-layout,
+.settings-stack,
 .info-stack {
   display: grid;
   gap: 24px;
@@ -466,6 +467,21 @@ canvas {
   font-size: 13px;
 }
 
+.settings-section-header {
+  align-items: flex-start;
+}
+
+.settings-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.selection-summary-line {
+  margin-top: 14px;
+}
+
 .detail-heading {
   display: flex;
   gap: 16px;
@@ -593,6 +609,97 @@ canvas {
 
 .status-text {
   font-size: 14px;
+}
+
+.setting-check-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.setting-check-item {
+  display: grid;
+  grid-template-columns: 22px 18px 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.setting-check-item + .setting-check-item {
+  border-top: 1px solid var(--line);
+}
+
+.setting-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.setting-checkbox-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  position: relative;
+  transition: all 180ms ease;
+}
+
+.setting-checkbox-mark::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border-right: 2px solid white;
+  border-bottom: 2px solid white;
+  transform: rotate(45deg);
+  opacity: 0;
+}
+
+.setting-checkbox-input:checked + .setting-checkbox-mark {
+  background: linear-gradient(135deg, rgba(26, 141, 255, 0.96), rgba(83, 204, 255, 0.96));
+  border-color: transparent;
+}
+
+.setting-checkbox-input:checked + .setting-checkbox-mark::after {
+  opacity: 1;
+}
+
+.setting-checkbox-input:focus-visible + .setting-checkbox-mark {
+  outline: 2px solid rgba(83, 204, 255, 0.8);
+  outline-offset: 3px;
+}
+
+.setting-item-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+  font-size: 16px;
+}
+
+.setting-item-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setting-item-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.setting-item-meta {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes fade-slide {

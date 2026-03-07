@@ -136,22 +136,44 @@
           </section>
 
           <div class="settings-layout">
-            <article class="card settings-panel">
-              <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
-                <div class="setting-copy">
-                  <span class="setting-name">开机自启动</span>
-                  <span class="setting-text">登录 Windows 后自动启动应用，并默认常驻托盘。</span>
-                </div>
-                <span class="toggle-switch" id="auto-launch-switch" aria-hidden="true">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </button>
+            <div class="settings-stack">
+              <article class="card settings-panel">
+                <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
+                  <div class="setting-copy">
+                    <span class="setting-name">开机自启动</span>
+                    <span class="setting-text">登录 Windows 后自动启动应用，并默认常驻托盘。</span>
+                  </div>
+                  <span class="toggle-switch" id="auto-launch-switch" aria-hidden="true">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </button>
 
-              <div class="setting-status-line">
-                <span class="status-dot" id="auto-launch-dot"></span>
-                <span class="status-text" id="auto-launch-status">读取中</span>
-              </div>
-            </article>
+                <div class="setting-status-line">
+                  <span class="status-dot" id="auto-launch-dot"></span>
+                  <span class="status-text" id="auto-launch-status">读取中</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <div class="section-title-row settings-section-header">
+                  <div>
+                    <h3 class="section-title">显示统计项</h3>
+                    <p class="settings-description">只有勾选的项目会显示在排行与详情中，并参与总使用时长计算。</p>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="text-button inline-button" type="button" id="select-all-items-button">全选</button>
+                    <button class="text-button inline-button" type="button" id="clear-all-items-button">清空</button>
+                  </div>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot active"></span>
+                  <span class="status-text" id="selected-items-summary">已选择 0 项</span>
+                </div>
+
+                <div class="setting-check-list" id="item-visibility-list"></div>
+              </article>
+            </div>
 
             <article class="bridge-card settings-help-card">
               <div>
@@ -179,6 +201,18 @@
         </div>
         <span class="chevron">›</span>
       </button>
+    </template>
+
+    <template id="setting-item-template">
+      <label class="setting-check-item">
+        <input class="setting-checkbox-input" type="checkbox" />
+        <span class="setting-checkbox-mark" aria-hidden="true"></span>
+        <span class="app-avatar setting-item-avatar"></span>
+        <span class="setting-item-copy">
+          <span class="setting-item-name"></span>
+          <span class="setting-item-meta"></span>
+        </span>
+      </label>
     </template>
 
     <script src="./app.js"></script>
