@@ -280,6 +280,7 @@ canvas {
   box-shadow: 0 20px 34px rgba(0, 0, 0, 0.45);
   pointer-events: none;
   transform: translate(-50%, -100%);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   z-index: 4;
 }
