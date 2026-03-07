@@ -115,11 +115,6 @@
         </section>
 
         <section class="screen" id="settings-screen">
-          <section class="section-block settings-heading">
-            <h2 class="section-title settings-title">设置</h2>
-            <p class="settings-page-subtitle">应用级设置会与系统托盘菜单实时同步。</p>
-          </section>
-
           <div class="settings-layout">
             <div class="settings-stack">
               <article class="card settings-panel">
@@ -136,6 +131,26 @@
                 <div class="setting-status-line">
                   <span class="status-dot" id="auto-launch-dot"></span>
                   <span class="status-text" id="auto-launch-status">读取中</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <div class="section-title-row settings-section-header close-setting-header">
+                  <div>
+                    <h3 class="section-title">关闭窗口时</h3>
+                    <p class="settings-description">设置点击窗口关闭按钮后的默认行为。</p>
+                  </div>
+                </div>
+
+                <div class="option-chip-group" id="close-action-group" role="radiogroup" aria-label="关闭窗口时的默认操作">
+                  <button class="option-chip" type="button" data-close-action="exit" role="radio" aria-checked="false">退出应用</button>
+                  <button class="option-chip" type="button" data-close-action="tray" role="radio" aria-checked="false">最小化到系统托盘</button>
+                  <button class="option-chip" type="button" data-close-action="ask" role="radio" aria-checked="false">每次都询问</button>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot active"></span>
+                  <span class="status-text" id="close-action-status">读取中</span>
                 </div>
               </article>
 

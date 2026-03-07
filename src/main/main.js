@@ -1,12 +1,18 @@
 const fs = require('fs/promises');
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
 const LOGIN_HIDDEN_ARG = '--launch-hidden';
 const SHOW_WINDOW_ARG = '--show-window';
-const DEFAULT_APP_SETTINGS = Object.freeze({ hiddenItemKeys: [] });
+const CLOSE_ACTION_EXIT = 'exit';
+const CLOSE_ACTION_TRAY = 'tray';
+const CLOSE_ACTION_ASK = 'ask';
+const DEFAULT_APP_SETTINGS = Object.freeze({
+  hiddenItemKeys: [],
+  closeWindowAction: CLOSE_ACTION_TRAY
+});
 
 let mainWindow;
 let usageTracker;
@@ -16,6 +22,8 @@ let autoLaunchEnabled = false;
 let usageIconService;
 let shouldLaunchHidden = false;
 let appSettings = { ...DEFAULT_APP_SETTINGS };
+let isHandlingCloseAction = false;
+let isShuttingDown = false;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -64,10 +72,19 @@ function normalizeHiddenItemKeys(hiddenItemKeys) {
   return [...new Set(hiddenItemKeys.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
 }
 
+function normalizeCloseWindowAction(value) {
+  if (value === CLOSE_ACTION_EXIT || value === CLOSE_ACTION_TRAY || value === CLOSE_ACTION_ASK) {
+    return value;
+  }
+
+  return CLOSE_ACTION_TRAY;
+}
+
 function getSettingsPayload() {
   return {
     autoLaunchEnabled,
-    hiddenItemKeys: [...appSettings.hiddenItemKeys]
+    hiddenItemKeys: [...appSettings.hiddenItemKeys],
+    closeWindowAction: appSettings.closeWindowAction
   };
 }
 
@@ -76,7 +93,8 @@ async function loadAppSettings() {
     const rawSettings = await fs.readFile(getSettingsFilePath(), 'utf8');
     const parsed = JSON.parse(rawSettings);
     appSettings = {
-      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys)
+      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
+      closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction)
     };
   } catch {
     appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -103,6 +121,12 @@ function writeAutoLaunchState(enabled) {
 
 async function writeHiddenItemKeys(hiddenItemKeys) {
   appSettings.hiddenItemKeys = normalizeHiddenItemKeys(hiddenItemKeys);
+  await saveAppSettings();
+  notifySettingsChanged();
+}
+
+async function writeCloseWindowAction(closeWindowAction) {
+  appSettings.closeWindowAction = normalizeCloseWindowAction(closeWindowAction);
   await saveAppSettings();
   notifySettingsChanged();
 }
@@ -151,10 +175,73 @@ function hideMainWindow() {
   }
 }
 
-function restartApp() {
+async function shutdownApp({ relaunch = false } = {}) {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
   isQuitting = true;
-  app.relaunch();
-  app.exit(0);
+
+  try {
+    if (usageTracker) {
+      await usageTracker.dispose();
+      usageTracker = null;
+    }
+
+    if (relaunch) {
+      app.relaunch();
+    }
+
+    app.exit(0);
+  } catch (error) {
+    console.error('退出前保存使用数据失败:', error);
+
+    if (relaunch) {
+      app.relaunch();
+    }
+
+    app.exit(1);
+  }
+}
+
+async function handleCloseRequest() {
+  const action = normalizeCloseWindowAction(appSettings.closeWindowAction);
+  if (action === CLOSE_ACTION_EXIT) {
+    await shutdownApp();
+    return;
+  }
+
+  if (action === CLOSE_ACTION_TRAY) {
+    hideMainWindow();
+    updateTrayMenu();
+    return;
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['退出应用', '最小化到系统托盘', '取消'],
+    defaultId: 1,
+    cancelId: 2,
+    noLink: true,
+    title: '关闭窗口',
+    message: '关闭窗口时要执行什么操作？',
+    detail: '你可以在设置中修改默认关闭行为。'
+  });
+
+  if (response === 0) {
+    await shutdownApp();
+    return;
+  }
+
+  if (response === 1) {
+    hideMainWindow();
+    updateTrayMenu();
+  }
 }
 
 function updateTrayMenu() {
@@ -184,15 +271,14 @@ function updateTrayMenu() {
     {
       label: '重启',
       click: () => {
-        restartApp();
+        shutdownApp({ relaunch: true }).catch(() => {});
       }
     },
     { type: 'separator' },
     {
       label: '退出',
       click: () => {
-        isQuitting = true;
-        app.quit();
+        shutdownApp().catch(() => {});
       }
     }
   ]);
@@ -250,8 +336,16 @@ function createWindow() {
     }
 
     event.preventDefault();
-    hideMainWindow();
-    updateTrayMenu();
+    if (isHandlingCloseAction) {
+      return;
+    }
+
+    isHandlingCloseAction = true;
+    handleCloseRequest()
+      .catch(() => {})
+      .finally(() => {
+        isHandlingCloseAction = false;
+      });
   });
 
   mainWindow.on('show', updateTrayMenu);
@@ -305,7 +399,7 @@ process.on('unhandledRejection', (error) => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && isQuitting) {
-    app.quit();
+    app.exit(0);
   }
 });
 
@@ -317,11 +411,13 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', async () => {
-  isQuitting = true;
-  if (usageTracker) {
-    await usageTracker.dispose();
+app.on('before-quit', (event) => {
+  if (isShuttingDown || isQuitting) {
+    return;
   }
+
+  event.preventDefault();
+  shutdownApp().catch(() => {});
 });
 
 ipcMain.handle('settings:get', async () => getSettingsPayload());
@@ -333,6 +429,11 @@ ipcMain.handle('settings:set-auto-launch', async (_event, enabled) => {
 
 ipcMain.handle('settings:set-hidden-item-keys', async (_event, hiddenItemKeys) => {
   await writeHiddenItemKeys(hiddenItemKeys);
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-close-window-action', async (_event, closeWindowAction) => {
+  await writeCloseWindowAction(closeWindowAction);
   return getSettingsPayload();
 });
 
