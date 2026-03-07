@@ -484,7 +484,6 @@ canvas {
 
 .bridge-hint,
 .settings-description,
-.settings-page-subtitle,
 .setting-text {
   color: var(--muted);
   font-size: 13px;
@@ -499,6 +498,43 @@ canvas {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+.close-setting-header {
+  margin-bottom: 0;
+}
+
+.option-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.option-chip {
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(245, 245, 247, 0.82);
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.option-chip:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.option-chip.active {
+  border-color: transparent;
+  background: linear-gradient(135deg, rgba(26, 141, 255, 0.96), rgba(83, 204, 255, 0.96));
+  color: #ffffff;
+}
+
+.option-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .selection-summary-line {
@@ -549,10 +585,6 @@ canvas {
   font-size: 15px;
   line-height: 1.45;
   word-break: break-all;
-}
-
-.settings-title {
-  font-size: 22px;
 }
 
 .setting-row {
@@ -766,10 +798,6 @@ canvas {
     margin-top: 26px;
     grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
     align-items: start;
-  }
-
-  .settings-heading {
-    margin-top: 28px;
   }
 }
 

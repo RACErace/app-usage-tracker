@@ -8,7 +8,8 @@ const state = {
   activeScreen: 'overview',
   iconCache: new Map(),
   unsubscribe: null,
-  updatingHiddenItems: false
+  updatingHiddenItems: false,
+  updatingCloseAction: false
 };
 
 const elements = {
@@ -47,6 +48,8 @@ const elements = {
   autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   autoLaunchSwitch: document.getElementById('auto-launch-switch'),
   autoLaunchDot: document.getElementById('auto-launch-dot'),
+  closeActionStatus: document.getElementById('close-action-status'),
+  closeActionButtons: [...document.querySelectorAll('[data-close-action]')],
   selectedItemsSummary: document.getElementById('selected-items-summary'),
   itemVisibilityList: document.getElementById('item-visibility-list'),
   selectAllItemsButton: document.getElementById('select-all-items-button'),
@@ -518,10 +521,25 @@ function showScreen(screen) {
 
 function renderSettingsState() {
   const enabled = Boolean(state.settings?.autoLaunchEnabled);
+  const closeAction = state.settings?.closeWindowAction || 'tray';
+  const closeActionLabels = {
+    exit: '关闭窗口时将直接退出应用',
+    tray: '关闭窗口时将最小化到系统托盘',
+    ask: '关闭窗口时每次都询问'
+  };
+
   elements.autoLaunchSwitch.classList.toggle('active', enabled);
   elements.autoLaunchDot.classList.toggle('active', enabled);
   elements.autoLaunchStatus.textContent = enabled ? '已开启开机自启动' : '未开启开机自启动';
   elements.autoLaunchToggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+
+  elements.closeActionStatus.textContent = closeActionLabels[closeAction] || closeActionLabels.tray;
+  elements.closeActionButtons.forEach((button) => {
+    const isActive = button.dataset.closeAction === closeAction;
+    button.classList.toggle('active', isActive);
+    button.disabled = state.updatingCloseAction;
+    button.setAttribute('aria-checked', isActive ? 'true' : 'false');
+  });
 }
 
 function renderItemVisibilitySettings() {
@@ -828,6 +846,32 @@ function renderSettingsScreen() {
   showScreen('settings');
 }
 
+async function updateCloseWindowAction(closeWindowAction) {
+  if (state.updatingCloseAction) {
+    return;
+  }
+
+  const previousSettings = state.settings || { autoLaunchEnabled: false, hiddenItemKeys: [], closeWindowAction: 'tray' };
+  state.updatingCloseAction = true;
+  state.settings = {
+    ...previousSettings,
+    closeWindowAction
+  };
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setCloseWindowAction(closeWindowAction);
+  } catch (error) {
+    state.settings = previousSettings;
+    renderSettingsScreen();
+    throw error;
+  } finally {
+    state.updatingCloseAction = false;
+  }
+
+  renderSettingsScreen();
+}
+
 async function openDetail(itemKey) {
   if (!isItemVisible(itemKey)) {
     returnToOverview();
@@ -987,6 +1031,12 @@ function bindEvents() {
     } finally {
       elements.autoLaunchToggle.disabled = false;
     }
+  });
+
+  elements.closeActionButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      updateCloseWindowAction(button.dataset.closeAction).catch(() => {});
+    });
   });
 
   elements.selectAllItemsButton.addEventListener('click', () => {

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('usageApi', {
   getIcons: (items) => ipcRenderer.invoke('usage:get-icons', items),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
+  setCloseWindowAction: (closeWindowAction) => ipcRenderer.invoke('settings:set-close-window-action', closeWindowAction),
   setHiddenItemKeys: (hiddenItemKeys) => ipcRenderer.invoke('settings:set-hidden-item-keys', hiddenItemKeys),
   forcePoll: () => ipcRenderer.invoke('usage:force-poll'),
   onDataChanged: (listener) => {
