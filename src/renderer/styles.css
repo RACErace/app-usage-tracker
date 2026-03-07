@@ -618,11 +618,13 @@ canvas {
   max-height: 420px;
   overflow: auto;
   padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .setting-check-item {
+  position: relative;
   display: grid;
-  grid-template-columns: 22px 18px 46px minmax(0, 1fr);
+  grid-template-columns: 18px 46px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 12px 0;
@@ -637,6 +639,7 @@ canvas {
   position: absolute;
   opacity: 0;
   pointer-events: none;
+  inset: 0;
 }
 
 .setting-checkbox-mark {
@@ -684,19 +687,13 @@ canvas {
 }
 
 .setting-item-copy {
-  display: grid;
-  gap: 6px;
   min-width: 0;
 }
 
 .setting-item-name {
+  display: block;
   font-size: 15px;
   font-weight: 700;
-}
-
-.setting-item-meta {
-  color: var(--muted);
-  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
