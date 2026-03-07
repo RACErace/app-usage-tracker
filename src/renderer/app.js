@@ -12,6 +12,7 @@ const state = {
 };
 
 const elements = {
+  topbar: document.querySelector('.topbar'),
   screenTitle: document.getElementById('screen-title'),
   overviewScreen: document.getElementById('overview-screen'),
   detailScreen: document.getElementById('detail-screen'),
@@ -486,6 +487,7 @@ function updateHeader() {
   const isOverview = state.activeScreen === 'overview';
   const isDetail = state.activeScreen === 'detail';
 
+  elements.topbar.classList.toggle('overview-hidden', isOverview);
   elements.backButton.classList.toggle('inactive', isOverview);
   elements.settingsButton.classList.toggle('hidden-action', !isOverview);
   elements.screenTitle.textContent = isDetail

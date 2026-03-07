@@ -50,9 +50,13 @@ button {
 
 .topbar {
   display: grid;
-  grid-template-columns: 44px 1fr 60px;
+  grid-template-columns: 44px 1fr;
   align-items: center;
   gap: 8px;
+}
+
+.topbar.overview-hidden {
+  display: none;
 }
 
 .title-block {
@@ -121,9 +125,10 @@ button {
 
 .tab-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
+  gap: 0;
+  margin-top: 0;
 }
 
 .range-tab {
@@ -135,6 +140,11 @@ button {
   font-size: 17px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.tab-settings-button {
+  justify-self: stretch;
+  text-align: center;
 }
 
 .range-tab.active {
@@ -352,7 +362,7 @@ canvas {
 .ranking-list {
   display: grid;
   gap: 14px;
-  max-height: calc(8 * 84px + 7 * 14px);
+  max-height: calc(5 * 84px + 4 * 14px);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
@@ -761,7 +771,7 @@ canvas {
 
 @media (min-width: 1200px) {
   .topbar {
-    grid-template-columns: 44px 1fr 68px;
+    grid-template-columns: 44px 1fr;
   }
 
   .screen-title {
