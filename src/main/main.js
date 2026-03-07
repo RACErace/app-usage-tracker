@@ -150,6 +150,12 @@ function hideMainWindow() {
   }
 }
 
+function restartApp() {
+  isQuitting = true;
+  app.relaunch();
+  app.exit(0);
+}
+
 function updateTrayMenu() {
   if (!tray) {
     return;
@@ -172,6 +178,12 @@ function updateTrayMenu() {
       checked: autoLaunchEnabled,
       click: (menuItem) => {
         writeAutoLaunchState(menuItem.checked);
+      }
+    },
+    {
+      label: '重启',
+      click: () => {
+        restartApp();
       }
     },
     { type: 'separator' },
