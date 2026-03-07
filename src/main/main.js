@@ -5,6 +5,7 @@ const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
 const LOGIN_HIDDEN_ARG = '--launch-hidden';
+const SHOW_WINDOW_ARG = '--show-window';
 const DEFAULT_APP_SETTINGS = Object.freeze({ hiddenItemKeys: [] });
 
 let mainWindow;
@@ -43,7 +44,7 @@ function getLoginItemOptions(enabled) {
 }
 
 function isHiddenLaunch() {
-  return process.argv.includes(LOGIN_HIDDEN_ARG);
+  return process.argv.includes(LOGIN_HIDDEN_ARG) && !process.argv.includes(SHOW_WINDOW_ARG);
 }
 
 function readAutoLaunchState() {
