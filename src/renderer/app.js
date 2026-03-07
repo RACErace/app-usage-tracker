@@ -7,7 +7,8 @@ const state = {
   detail: null,
   activeScreen: 'overview',
   iconCache: new Map(),
-  unsubscribe: null
+  unsubscribe: null,
+  updatingHiddenItems: false
 };
 
 const elements = {
@@ -44,7 +45,12 @@ const elements = {
   autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   autoLaunchSwitch: document.getElementById('auto-launch-switch'),
   autoLaunchDot: document.getElementById('auto-launch-dot'),
-  itemTemplate: document.getElementById('ranking-item-template')
+  selectedItemsSummary: document.getElementById('selected-items-summary'),
+  itemVisibilityList: document.getElementById('item-visibility-list'),
+  selectAllItemsButton: document.getElementById('select-all-items-button'),
+  clearAllItemsButton: document.getElementById('clear-all-items-button'),
+  itemTemplate: document.getElementById('ranking-item-template'),
+  settingItemTemplate: document.getElementById('setting-item-template')
 };
 
 function formatDuration(ms, mode = 'long') {
@@ -131,6 +137,121 @@ function getIconRequestPayload(item) {
   };
 }
 
+function getHiddenItemKeySet() {
+  return new Set(state.settings?.hiddenItemKeys || []);
+}
+
+function isItemVisible(itemKey) {
+  return !getHiddenItemKeySet().has(itemKey);
+}
+
+function mergeHourly(items) {
+  const hourly = new Array(24).fill(0);
+  items.forEach((item) => {
+    (item.hourly || []).forEach((value, index) => {
+      hourly[index] += Number(value) || 0;
+    });
+  });
+  return hourly;
+}
+
+function getFilteredDay(day) {
+  const items = (day?.items || []).filter((item) => isItemVisible(item.key));
+  return {
+    totalMs: items.reduce((sum, item) => sum + (Number(item.totalMs) || 0), 0),
+    items,
+    hourly: mergeHourly(items)
+  };
+}
+
+function getFilteredWeekly(snapshot) {
+  const dayKeys = snapshot?.weekly?.dayKeys || [];
+  const weeklyMap = new Map();
+  let totalMs = 0;
+
+  const dailyTotals = dayKeys.map((dayKey) => {
+    const filteredDay = getFilteredDay(snapshot?.daily?.days?.[dayKey]);
+    totalMs += filteredDay.totalMs;
+
+    filteredDay.items.forEach((item) => {
+      const existing = weeklyMap.get(item.key);
+      if (!existing) {
+        weeklyMap.set(item.key, {
+          ...item,
+          totalMs: item.totalMs,
+          hourly: [...(item.hourly || new Array(24).fill(0))],
+          byDay: { [dayKey]: item.totalMs }
+        });
+        return;
+      }
+
+      existing.totalMs += item.totalMs;
+      existing.byDay[dayKey] = item.totalMs;
+      existing.hourly = existing.hourly.map((value, index) => value + ((item.hourly && item.hourly[index]) || 0));
+      existing.label = item.label;
+      existing.subtitle = item.subtitle;
+      existing.url = item.url || existing.url;
+      existing.host = item.host || existing.host;
+      existing.pageTitle = item.pageTitle || existing.pageTitle;
+      existing.appName = item.appName || existing.appName;
+      existing.executablePath = item.executablePath || existing.executablePath;
+      existing.browserFamily = item.browserFamily || existing.browserFamily;
+    });
+
+    return { dayKey, totalMs: filteredDay.totalMs };
+  });
+
+  return {
+    dayKeys,
+    totalMs,
+    averageMs: dayKeys.length ? Math.round(totalMs / dayKeys.length) : 0,
+    dailyTotals,
+    items: [...weeklyMap.values()].sort((left, right) => right.totalMs - left.totalMs)
+  };
+}
+
+function getAllKnownItems() {
+  const catalog = new Map();
+
+  Object.values(state.snapshot?.daily?.days || {}).forEach((day) => {
+    (day.items || []).forEach((item) => {
+      const existing = catalog.get(item.key);
+      if (!existing) {
+        catalog.set(item.key, {
+          ...item,
+          totalMs: Number(item.totalMs) || 0
+        });
+        return;
+      }
+
+      existing.totalMs += Number(item.totalMs) || 0;
+      if ((Number(item.lastSeenAt) || 0) >= (Number(existing.lastSeenAt) || 0)) {
+        existing.label = item.label;
+        existing.subtitle = item.subtitle;
+        existing.appName = item.appName;
+        existing.browserFamily = item.browserFamily;
+        existing.pageTitle = item.pageTitle;
+        existing.windowTitle = item.windowTitle;
+        existing.url = item.url;
+        existing.host = item.host;
+        existing.path = item.path;
+        existing.executablePath = item.executablePath;
+        existing.color = item.color;
+        existing.kind = item.kind;
+        existing.lastSeenAt = item.lastSeenAt;
+      }
+    });
+  });
+
+  return [...catalog.values()].sort((left, right) => right.totalMs - left.totalMs);
+}
+
+function getSettingsItemMeta(item) {
+  const subtitle = getRankingSubtitle(item);
+  const duration = formatDuration(item.totalMs, 'short');
+  return subtitle ? `${duration} · ${subtitle}` : duration;
+}
+
 function setAvatarContent(element, item, iconDataUrl) {
   if (!element) {
     return;
@@ -185,6 +306,22 @@ async function hydrateDetailIcon(item) {
   if (state.detail && state.detail.key === item.key) {
     setAvatarContent(elements.detailAvatar, item, state.iconCache.get(item.key) || null);
   }
+}
+
+function patchSettingsIcons(items) {
+  items.forEach((item) => {
+    const avatar = elements.itemVisibilityList.querySelector(`[data-item-key="${CSS.escape(item.key)}"] .setting-item-avatar`);
+    if (!avatar) {
+      return;
+    }
+
+    setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
+  });
+}
+
+async function hydrateSettingsIcons(items) {
+  await requestIcons(items);
+  patchSettingsIcons(items);
 }
 
 function lookupDay(dayKey) {
@@ -352,6 +489,55 @@ function renderSettingsState() {
   elements.autoLaunchToggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
 }
 
+function renderItemVisibilitySettings() {
+  const items = getAllKnownItems();
+  const hiddenKeys = getHiddenItemKeySet();
+  const selectedCount = items.filter((item) => !hiddenKeys.has(item.key)).length;
+
+  elements.selectedItemsSummary.textContent = items.length
+    ? `已选择 ${selectedCount} / ${items.length} 项`
+    : '暂无可配置的统计项';
+  elements.selectAllItemsButton.disabled = !items.length || selectedCount === items.length || state.updatingHiddenItems;
+  elements.clearAllItemsButton.disabled = !items.length || selectedCount === 0 || state.updatingHiddenItems;
+  elements.itemVisibilityList.innerHTML = '';
+
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ranking-subtitle';
+    empty.textContent = '采集到统计数据后，这里会显示可选项目。';
+    elements.itemVisibilityList.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const fragment = elements.settingItemTemplate.content.cloneNode(true);
+    const row = fragment.querySelector('.setting-check-item');
+    const input = fragment.querySelector('.setting-checkbox-input');
+    const avatar = fragment.querySelector('.setting-item-avatar');
+    const name = fragment.querySelector('.setting-item-name');
+    const meta = fragment.querySelector('.setting-item-meta');
+    const checked = !hiddenKeys.has(item.key);
+
+    row.dataset.itemKey = item.key;
+    input.checked = checked;
+    input.disabled = state.updatingHiddenItems;
+    input.setAttribute('aria-label', `切换 ${item.label} 的显示状态`);
+    name.textContent = item.label;
+    meta.textContent = getSettingsItemMeta(item);
+    setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
+
+    input.addEventListener('change', () => {
+      updateItemVisibility(item.key, input.checked).catch(() => {
+        input.checked = !input.checked;
+      });
+    });
+
+    elements.itemVisibilityList.appendChild(fragment);
+  });
+
+  hydrateSettingsIcons(items).catch(() => {});
+}
+
 function renderRanking(items, totalMs) {
   elements.rankingList.innerHTML = '';
   if (!items.length) {
@@ -393,10 +579,11 @@ function renderOverview() {
   }
 
   ensureSelectedDayKey();
-  const activeDay = lookupDay(state.selectedDayKey);
+  const activeDay = getFilteredDay(lookupDay(state.selectedDayKey));
+  const weekly = getFilteredWeekly(snapshot);
   const isDaily = state.selectedRange === 'daily';
-  const rankingItems = isDaily ? activeDay.items : snapshot.weekly.items;
-  const totalMs = isDaily ? activeDay.totalMs : snapshot.weekly.totalMs;
+  const rankingItems = isDaily ? activeDay.items : weekly.items;
+  const totalMs = isDaily ? activeDay.totalMs : weekly.totalMs;
 
   elements.rangeTabs.forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.range === state.selectedRange);
@@ -404,17 +591,17 @@ function renderOverview() {
 
   elements.previousDay.style.visibility = isDaily ? 'visible' : 'hidden';
   elements.nextDay.style.visibility = isDaily ? 'visible' : 'hidden';
-  elements.dateLabel.textContent = isDaily ? formatDayLabel(state.selectedDayKey) : formatWeekRange(snapshot.weekly.dayKeys);
+  elements.dateLabel.textContent = isDaily ? formatDayLabel(state.selectedDayKey) : formatWeekRange(weekly.dayKeys);
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
-  elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(snapshot.weekly.averageMs, 'short');
-  elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(snapshot.weekly.totalMs)}`;
+  elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(weekly.averageMs, 'short');
+  elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(weekly.totalMs)}`;
   elements.bridgeUrlText.textContent = snapshot.meta.bridgeUrl;
 
   renderRanking(rankingItems, totalMs);
   renderSettingsState();
 
   if (isDaily) {
-    const hourly = activeDay.hourly || snapshot.daily.hourly;
+    const hourly = activeDay.hourly;
     drawBarChart({
       canvas: elements.chartCanvas,
       bars: hourly.map((value) => Math.round(value / 60000)),
@@ -462,8 +649,8 @@ function renderOverview() {
   } else {
     drawBarChart({
       canvas: elements.chartCanvas,
-      bars: snapshot.weekly.dailyTotals.map((item) => Math.round((item.totalMs / 3600000) * 10) / 10),
-      labels: snapshot.weekly.dayKeys.map((dayKey) => weekdayLabel(dayKey)),
+      bars: weekly.dailyTotals.map((item) => Math.round((item.totalMs / 3600000) * 10) / 10),
+      labels: weekly.dayKeys.map((dayKey) => weekdayLabel(dayKey)),
       yLabels: [
         { ratio: 0, label: '0' },
         { ratio: 0.66, label: '平均' },
@@ -472,8 +659,8 @@ function renderOverview() {
       color: '#1a8dff',
       tooltip: elements.chartTooltip,
       onHover: (hit, rect) => {
-        const dayKey = snapshot.weekly.dayKeys[hit.index];
-        const topItems = snapshot.weekly.items
+        const dayKey = weekly.dayKeys[hit.index];
+        const topItems = weekly.items
           .map((item) => ({
             label: item.label,
             initials: getInitials(item),
@@ -489,7 +676,7 @@ function renderOverview() {
           rect,
           hit,
           `
-            <span class="tooltip-value">${formatDuration(snapshot.weekly.dailyTotals[hit.index].totalMs)}</span>
+            <span class="tooltip-value">${formatDuration(weekly.dailyTotals[hit.index].totalMs)}</span>
             <span class="tooltip-label">${formatDayLabel(dayKey)}</span>
             <div class="tooltip-list">
               ${topItems
@@ -607,10 +794,16 @@ function renderDetail() {
 
 function renderSettingsScreen() {
   renderSettingsState();
+  renderItemVisibilitySettings();
   showScreen('settings');
 }
 
 async function openDetail(itemKey) {
+  if (!isItemVisible(itemKey)) {
+    returnToOverview();
+    return;
+  }
+
   state.detailItemKey = itemKey;
   const detail = await window.usageApi.getDetail(itemKey);
   if (!detail) {
@@ -628,6 +821,60 @@ function returnToOverview() {
   state.detailItemKey = null;
   state.detail = null;
   renderOverview();
+}
+
+function renderCurrentScreen() {
+  if (state.activeScreen === 'settings') {
+    renderSettingsScreen();
+    return;
+  }
+
+  if (state.activeScreen === 'detail' && state.detail) {
+    renderDetail();
+    return;
+  }
+
+  renderOverview();
+}
+
+async function updateHiddenItemKeys(hiddenItemKeys) {
+  const nextHiddenItemKeys = [...new Set(hiddenItemKeys)];
+  const previousSettings = state.settings || { autoLaunchEnabled: false, hiddenItemKeys: [] };
+
+  state.updatingHiddenItems = true;
+  state.settings = {
+    ...previousSettings,
+    hiddenItemKeys: nextHiddenItemKeys
+  };
+  renderCurrentScreen();
+
+  try {
+    state.settings = await window.usageApi.setHiddenItemKeys(nextHiddenItemKeys);
+  } catch (error) {
+    state.settings = previousSettings;
+    renderCurrentScreen();
+    throw error;
+  } finally {
+    state.updatingHiddenItems = false;
+  }
+
+  if (state.detailItemKey && !isItemVisible(state.detailItemKey)) {
+    returnToOverview();
+    return;
+  }
+
+  renderCurrentScreen();
+}
+
+async function updateItemVisibility(itemKey, isVisible) {
+  const hiddenKeys = getHiddenItemKeySet();
+  if (isVisible) {
+    hiddenKeys.delete(itemKey);
+  } else {
+    hiddenKeys.add(itemKey);
+  }
+
+  await updateHiddenItemKeys([...hiddenKeys]);
 }
 
 function bindEvents() {
@@ -678,10 +925,19 @@ function bindEvents() {
     elements.autoLaunchToggle.disabled = true;
     try {
       state.settings = await window.usageApi.setAutoLaunch(nextValue);
-      renderSettingsState();
+      renderSettingsScreen();
     } finally {
       elements.autoLaunchToggle.disabled = false;
     }
+  });
+
+  elements.selectAllItemsButton.addEventListener('click', () => {
+    updateHiddenItemKeys([]).catch(() => {});
+  });
+
+  elements.clearAllItemsButton.addEventListener('click', () => {
+    const itemKeys = getAllKnownItems().map((item) => item.key);
+    updateHiddenItemKeys(itemKeys).catch(() => {});
   });
 
   elements.backButton.addEventListener('click', () => {
@@ -722,7 +978,12 @@ async function bootstrap() {
 
   window.usageApi.onSettingsChanged((settings) => {
     state.settings = settings;
-    renderSettingsState();
+    if (state.detailItemKey && !isItemVisible(state.detailItemKey)) {
+      returnToOverview();
+      return;
+    }
+
+    renderCurrentScreen();
   });
 }
 

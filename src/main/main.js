@@ -1,9 +1,11 @@
+const fs = require('fs/promises');
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
 const LOGIN_HIDDEN_ARG = '--launch-hidden';
+const DEFAULT_APP_SETTINGS = Object.freeze({ hiddenItemKeys: [] });
 
 let mainWindow;
 let usageTracker;
@@ -12,6 +14,7 @@ let isQuitting = false;
 let autoLaunchEnabled = false;
 let usageIconService;
 let shouldLaunchHidden = false;
+let appSettings = { ...DEFAULT_APP_SETTINGS };
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -48,15 +51,59 @@ function readAutoLaunchState() {
   return Boolean(settings.openAtLogin);
 }
 
+function getSettingsFilePath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function normalizeHiddenItemKeys(hiddenItemKeys) {
+  if (!Array.isArray(hiddenItemKeys)) {
+    return [];
+  }
+
+  return [...new Set(hiddenItemKeys.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
+}
+
+function getSettingsPayload() {
+  return {
+    autoLaunchEnabled,
+    hiddenItemKeys: [...appSettings.hiddenItemKeys]
+  };
+}
+
+async function loadAppSettings() {
+  try {
+    const rawSettings = await fs.readFile(getSettingsFilePath(), 'utf8');
+    const parsed = JSON.parse(rawSettings);
+    appSettings = {
+      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys)
+    };
+  } catch {
+    appSettings = { ...DEFAULT_APP_SETTINGS };
+  }
+}
+
+async function saveAppSettings() {
+  await fs.mkdir(app.getPath('userData'), { recursive: true });
+  await fs.writeFile(getSettingsFilePath(), JSON.stringify(appSettings, null, 2), 'utf8');
+}
+
+function notifySettingsChanged() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('settings:changed', getSettingsPayload());
+  }
+}
+
 function writeAutoLaunchState(enabled) {
   app.setLoginItemSettings(getLoginItemOptions(enabled));
   autoLaunchEnabled = readAutoLaunchState();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('settings:changed', {
-      autoLaunchEnabled
-    });
-  }
+  notifySettingsChanged();
   updateTrayMenu();
+}
+
+async function writeHiddenItemKeys(hiddenItemKeys) {
+  appSettings.hiddenItemKeys = normalizeHiddenItemKeys(hiddenItemKeys);
+  await saveAppSettings();
+  notifySettingsChanged();
 }
 
 function resolveAppIconPath() {
@@ -207,6 +254,7 @@ function createWindow() {
 async function bootstrap() {
   shouldLaunchHidden = isHiddenLaunch();
   autoLaunchEnabled = readAutoLaunchState();
+  await loadAppSettings();
   if (autoLaunchEnabled) {
     app.setLoginItemSettings(getLoginItemOptions(true));
   }
@@ -263,15 +311,16 @@ app.on('before-quit', async () => {
   }
 });
 
-ipcMain.handle('settings:get', async () => ({
-  autoLaunchEnabled
-}));
+ipcMain.handle('settings:get', async () => getSettingsPayload());
 
 ipcMain.handle('settings:set-auto-launch', async (_event, enabled) => {
   writeAutoLaunchState(Boolean(enabled));
-  return {
-    autoLaunchEnabled
-  };
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-hidden-item-keys', async (_event, hiddenItemKeys) => {
+  await writeHiddenItemKeys(hiddenItemKeys);
+  return getSettingsPayload();
 });
 
 ipcMain.handle('usage:get-snapshot', async () => {
