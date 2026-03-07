@@ -16,12 +16,13 @@
       </header>
 
       <main class="content-area">
+        <div class="tab-row" id="range-tabs">
+          <button class="range-tab active" type="button" data-range="daily">每天</button>
+          <button class="range-tab" type="button" data-range="weekly">近 7 天</button>
+          <button class="range-tab tab-settings-button" type="button" id="settings-button">设置</button>
+        </div>
+
         <section class="screen active" id="overview-screen">
-          <div class="tab-row" id="range-tabs">
-            <button class="range-tab active" type="button" data-range="daily">每天</button>
-            <button class="range-tab" type="button" data-range="weekly">近 7 天</button>
-            <button class="range-tab tab-settings-button" type="button" id="settings-button">设置</button>
-          </div>
 
           <section class="date-strip">
             <button class="pill-button" type="button" id="previous-day">‹</button>

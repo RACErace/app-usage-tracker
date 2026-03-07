@@ -131,6 +131,10 @@ button {
   margin-top: 0;
 }
 
+.tab-row.hidden-nav {
+  display: none;
+}
+
 .range-tab {
   position: relative;
   padding: 10px 0 8px;

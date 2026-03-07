@@ -13,6 +13,7 @@ const state = {
 
 const elements = {
   topbar: document.querySelector('.topbar'),
+  tabRow: document.getElementById('range-tabs'),
   screenTitle: document.getElementById('screen-title'),
   overviewScreen: document.getElementById('overview-screen'),
   detailScreen: document.getElementById('detail-screen'),
@@ -484,17 +485,26 @@ function showTooltip(tooltip, rect, chartPoint, content) {
 }
 
 function updateHeader() {
-  const isOverview = state.activeScreen === 'overview';
   const isDetail = state.activeScreen === 'detail';
 
-  elements.topbar.classList.toggle('overview-hidden', isOverview);
-  elements.backButton.classList.toggle('inactive', isOverview);
-  elements.settingsButton.classList.toggle('hidden-action', !isOverview);
+  elements.topbar.classList.toggle('overview-hidden', !isDetail);
+  elements.tabRow.classList.toggle('hidden-nav', isDetail);
+  elements.backButton.classList.toggle('inactive', !isDetail);
   elements.screenTitle.textContent = isDetail
     ? (state.detail?.label || '详情')
-    : state.activeScreen === 'settings'
-      ? '设置'
-      : '';
+    : '';
+}
+
+function updateTopTabs() {
+  const isSettings = state.activeScreen === 'settings';
+  elements.rangeTabs.forEach((tab) => {
+    if (tab.id === 'settings-button') {
+      tab.classList.toggle('active', isSettings);
+      return;
+    }
+
+    tab.classList.toggle('active', !isSettings && tab.dataset.range === state.selectedRange);
+  });
 }
 
 function showScreen(screen) {
@@ -502,6 +512,7 @@ function showScreen(screen) {
   elements.overviewScreen.classList.toggle('active', screen === 'overview');
   elements.detailScreen.classList.toggle('active', screen === 'detail');
   elements.settingsScreen.classList.toggle('active', screen === 'settings');
+  updateTopTabs();
   updateHeader();
 }
 
@@ -607,10 +618,6 @@ function renderOverview() {
   const isDaily = state.selectedRange === 'daily';
   const rankingItems = isDaily ? activeDay.items : weekly.items;
   const totalMs = isDaily ? activeDay.totalMs : weekly.totalMs;
-
-  elements.rangeTabs.forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.range === state.selectedRange);
-  });
 
   elements.previousDay.style.visibility = isDaily ? 'visible' : 'hidden';
   elements.nextDay.style.visibility = isDaily ? 'visible' : 'hidden';
@@ -931,6 +938,11 @@ async function updateItemVisibility(itemKey, isVisible) {
 function bindEvents() {
   elements.rangeTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
+      if (tab.id === 'settings-button') {
+        renderSettingsScreen();
+        return;
+      }
+
       state.selectedRange = tab.dataset.range;
       renderOverview();
     });
@@ -966,11 +978,6 @@ function bindEvents() {
     state.snapshot = await window.usageApi.forcePoll();
     renderOverview();
   });
-
-  elements.settingsButton.addEventListener('click', () => {
-    renderSettingsScreen();
-  });
-
   elements.autoLaunchToggle.addEventListener('click', async () => {
     const nextValue = !Boolean(state.settings?.autoLaunchEnabled);
     elements.autoLaunchToggle.disabled = true;
