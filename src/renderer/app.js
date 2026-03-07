@@ -246,12 +246,6 @@ function getAllKnownItems() {
   return [...catalog.values()].sort((left, right) => right.totalMs - left.totalMs);
 }
 
-function getSettingsItemMeta(item) {
-  const subtitle = getRankingSubtitle(item);
-  const duration = formatDuration(item.totalMs, 'short');
-  return subtitle ? `${duration} · ${subtitle}` : duration;
-}
-
 function setAvatarContent(element, item, iconDataUrl) {
   if (!element) {
     return;
@@ -515,15 +509,14 @@ function renderItemVisibilitySettings() {
     const input = fragment.querySelector('.setting-checkbox-input');
     const avatar = fragment.querySelector('.setting-item-avatar');
     const name = fragment.querySelector('.setting-item-name');
-    const meta = fragment.querySelector('.setting-item-meta');
     const checked = !hiddenKeys.has(item.key);
 
     row.dataset.itemKey = item.key;
     input.checked = checked;
     input.disabled = state.updatingHiddenItems;
+    input.dataset.itemKey = item.key;
     input.setAttribute('aria-label', `切换 ${item.label} 的显示状态`);
     name.textContent = item.label;
-    meta.textContent = getSettingsItemMeta(item);
     setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
 
     input.addEventListener('change', () => {
@@ -548,7 +541,7 @@ function renderRanking(items, totalMs) {
     return;
   }
 
-  items.slice(0, 8).forEach((item) => {
+  items.forEach((item) => {
     const fragment = elements.itemTemplate.content.cloneNode(true);
     const button = fragment.querySelector('.ranking-item');
     const avatar = fragment.querySelector('.app-avatar');
@@ -569,7 +562,7 @@ function renderRanking(items, totalMs) {
     elements.rankingList.appendChild(fragment);
   });
 
-  hydrateRankingIcons(items.slice(0, 8)).catch(() => {});
+  hydrateRankingIcons(items).catch(() => {});
 }
 
 function renderOverview() {
@@ -837,9 +830,35 @@ function renderCurrentScreen() {
   renderOverview();
 }
 
+function restoreSettingsViewport(pageScrollTop, listScrollTop, activeItemKey) {
+  requestAnimationFrame(() => {
+    if (state.activeScreen !== 'settings') {
+      return;
+    }
+
+    window.scrollTo({ top: pageScrollTop, behavior: 'instant' });
+
+    if (elements.itemVisibilityList) {
+      elements.itemVisibilityList.scrollTop = listScrollTop;
+    }
+
+    if (activeItemKey) {
+      const input = elements.itemVisibilityList.querySelector(`.setting-checkbox-input[data-item-key="${CSS.escape(activeItemKey)}"]`);
+      if (input && typeof input.focus === 'function') {
+        input.focus({ preventScroll: true });
+      }
+    }
+  });
+}
+
 async function updateHiddenItemKeys(hiddenItemKeys) {
   const nextHiddenItemKeys = [...new Set(hiddenItemKeys)];
   const previousSettings = state.settings || { autoLaunchEnabled: false, hiddenItemKeys: [] };
+  const previousPageScrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  const previousListScrollTop = state.activeScreen === 'settings' && elements.itemVisibilityList
+    ? elements.itemVisibilityList.scrollTop
+    : 0;
+  const activeItemKey = document.activeElement?.dataset?.itemKey || null;
 
   state.updatingHiddenItems = true;
   state.settings = {
@@ -853,6 +872,7 @@ async function updateHiddenItemKeys(hiddenItemKeys) {
   } catch (error) {
     state.settings = previousSettings;
     renderCurrentScreen();
+    restoreSettingsViewport(previousPageScrollTop, previousListScrollTop, activeItemKey);
     throw error;
   } finally {
     state.updatingHiddenItems = false;
@@ -864,6 +884,7 @@ async function updateHiddenItemKeys(hiddenItemKeys) {
   }
 
   renderCurrentScreen();
+  restoreSettingsViewport(previousPageScrollTop, previousListScrollTop, activeItemKey);
 }
 
 async function updateItemVisibility(itemKey, isVisible) {
