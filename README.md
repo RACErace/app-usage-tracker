@@ -68,12 +68,12 @@ npm run dist
 
 仓库已包含 GitHub Actions 工作流：推送到 `main` 后会自动在 GitHub Actions 中构建 Windows 安装版 exe 和便携版 exe。构建完成后，可在对应 workflow run 的 Artifacts 中下载。
 
-如果推送形如 `v1.0.0` 的 tag，工作流还会自动创建同名 GitHub Release，并把以下文件直接挂到 Release 附件：
+如果推送形如 `v1.1.1` 的 tag，工作流还会自动创建同名 GitHub Release，并把以下文件直接挂到 Release 附件：
 
-- `App-Usage-Tracker-1.0.0-installer.exe`
-- `App-Usage-Tracker-1.0.0-portable.exe`
+- `App-Usage-Tracker-1.1.1-installer.exe`
+- `App-Usage-Tracker-1.1.1-portable.exe`
 
-普通分支构建的 Actions Artifacts 也会按版本号命名，例如 `app-usage-tracker-1.0.0-windows`。
+普通分支构建的 Actions Artifacts 也会按版本号命名，例如 `app-usage-tracker-1.1.1-windows`。
 
 如果打包时报错 `Could not find any Visual Studio installation to use`，说明当前机器缺少 C++ 构建工具。这个项目依赖 `active-win`，在打包 Electron 应用时需要为 Electron 版本重编译原生模块。
 
