@@ -169,6 +169,19 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
+function pushUsageSnapshot({ force = false } = {}) {
+  if (!usageTracker || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (!force && !mainWindow.isVisible()) {
+    return;
+  }
+
+  const snapshot = usageTracker.getSnapshot();
+  mainWindow.webContents.send('usage:data-changed', snapshot);
+}
+
 function hideMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.hide();
@@ -348,7 +361,10 @@ function createWindow() {
       });
   });
 
-  mainWindow.on('show', updateTrayMenu);
+  mainWindow.on('show', () => {
+    updateTrayMenu();
+    pushUsageSnapshot({ force: true });
+  });
   mainWindow.on('hide', updateTrayMenu);
 
   mainWindow.on('closed', () => {
@@ -370,10 +386,7 @@ async function bootstrap() {
   usageTracker = new UsageTracker({
     userDataPath: app.getPath('userData'),
     onDataChanged: async () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        const snapshot = usageTracker.getSnapshot();
-        mainWindow.webContents.send('usage:data-changed', snapshot);
-      }
+      pushUsageSnapshot();
     }
   });
 

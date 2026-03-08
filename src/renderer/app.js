@@ -86,6 +86,14 @@ function formatDuration(ms, mode = 'long') {
   return `${minutes}分钟`;
 }
 
+function padNumber(value) {
+  return String(value).padStart(2, '0');
+}
+
+function getLocalDayKey(date = new Date()) {
+  return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
+}
+
 function formatDayLabel(dayKey) {
   if (!dayKey) {
     return '今天';
@@ -93,7 +101,7 @@ function formatDayLabel(dayKey) {
 
   const date = new Date(`${dayKey}T00:00:00`);
   const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
+  const todayKey = getLocalDayKey(today);
   if (dayKey === todayKey) {
     return `${date.getMonth() + 1}月${date.getDate()}日（今天）`;
   }
@@ -256,7 +264,7 @@ function setAvatarContent(element, item, iconDataUrl) {
     return;
   }
 
-  element.innerHTML = '';
+  element.replaceChildren();
   element.style.background = item.color;
   element.classList.toggle('has-image', Boolean(iconDataUrl));
 
@@ -457,10 +465,8 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
 
   canvas.onmousemove = (event) => {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const pointX = (event.clientX - rect.left) * scaleX;
-    const pointY = (event.clientY - rect.top) * scaleY;
+    const pointX = event.clientX - rect.left;
+    const pointY = event.clientY - rect.top;
     const hit = hitAreas.find((area) => pointX >= area.x && pointX <= area.x + area.width && pointY >= padding.top && pointY <= padding.top + chartHeight);
 
     if (!hit) {
@@ -478,8 +484,48 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
   };
 }
 
-function showTooltip(tooltip, rect, chartPoint, content) {
-  tooltip.innerHTML = content;
+function showTooltip({ tooltip, rect, chartPoint, valueText, labelText, rows = [] }) {
+  tooltip.replaceChildren();
+
+  const valueNode = document.createElement('span');
+  valueNode.className = 'tooltip-value';
+  valueNode.textContent = valueText;
+  tooltip.appendChild(valueNode);
+
+  if (labelText) {
+    const labelNode = document.createElement('span');
+    labelNode.className = 'tooltip-label';
+    labelNode.textContent = labelText;
+    tooltip.appendChild(labelNode);
+  }
+
+  if (rows.length) {
+    const listNode = document.createElement('div');
+    listNode.className = 'tooltip-list';
+
+    rows.forEach((row) => {
+      const rowNode = document.createElement('div');
+      rowNode.className = 'tooltip-row';
+
+      if (row.chipText) {
+        const chipNode = document.createElement('span');
+        chipNode.className = 'tooltip-chip';
+        chipNode.textContent = row.chipText;
+        if (row.chipColor) {
+          chipNode.style.background = row.chipColor;
+        }
+        rowNode.appendChild(chipNode);
+      }
+
+      const textNode = document.createElement('span');
+      textNode.textContent = row.text;
+      rowNode.appendChild(textNode);
+      listNode.appendChild(rowNode);
+    });
+
+    tooltip.appendChild(listNode);
+  }
+
   tooltip.classList.remove('hidden');
   const relativeX = (chartPoint.x + chartPoint.width / 2) / rect.width;
   const relativeY = chartPoint.y / rect.height;
@@ -552,7 +598,7 @@ function renderItemVisibilitySettings() {
     : '暂无可配置的统计项';
   elements.selectAllItemsButton.disabled = !items.length || selectedCount === items.length || state.updatingHiddenItems;
   elements.clearAllItemsButton.disabled = !items.length || selectedCount === 0 || state.updatingHiddenItems;
-  elements.itemVisibilityList.innerHTML = '';
+  elements.itemVisibilityList.replaceChildren();
 
   if (!items.length) {
     const empty = document.createElement('div');
@@ -591,7 +637,7 @@ function renderItemVisibilitySettings() {
 }
 
 function renderRanking(items, totalMs) {
-  elements.rankingList.innerHTML = '';
+  elements.rankingList.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'ranking-subtitle';
@@ -674,23 +720,18 @@ function renderOverview() {
           .slice(0, 3);
 
         showTooltip(
-          elements.chartTooltip,
-          rect,
-          hit,
-          `
-            <span class="tooltip-value">${formatDuration(hit.value * 60000)}</span>
-            <span class="tooltip-label">${hit.index} 时 - ${hit.index + 1} 时</span>
-            <div class="tooltip-list">
-              ${topItems
-                .map(
-                  (item) => `
-                    <div class="tooltip-row">
-                      <span class="tooltip-chip" style="background:${item.color}">${item.initials}</span>
-                      <span>${item.label} ${item.minutes}分钟</span>
-                    </div>`
-                )
-                .join('')}
-            </div>`
+          {
+            tooltip: elements.chartTooltip,
+            rect,
+            chartPoint: hit,
+            valueText: formatDuration(hit.value * 60000),
+            labelText: `${hit.index} 时 - ${hit.index + 1} 时`,
+            rows: topItems.map((item) => ({
+              chipColor: item.color,
+              chipText: item.initials,
+              text: `${item.label} ${item.minutes}分钟`
+            }))
+          }
         );
       }
     });
@@ -720,23 +761,18 @@ function renderOverview() {
           .slice(0, 3);
 
         showTooltip(
-          elements.chartTooltip,
-          rect,
-          hit,
-          `
-            <span class="tooltip-value">${formatDuration(weekly.dailyTotals[hit.index].totalMs)}</span>
-            <span class="tooltip-label">${formatDayLabel(dayKey)}</span>
-            <div class="tooltip-list">
-              ${topItems
-                .map(
-                  (item) => `
-                    <div class="tooltip-row">
-                      <span class="tooltip-chip" style="background:${item.color}">${item.initials}</span>
-                      <span>${item.label} ${formatDuration(item.duration, 'short')}</span>
-                    </div>`
-                )
-                .join('')}
-            </div>`
+          {
+            tooltip: elements.chartTooltip,
+            rect,
+            chartPoint: hit,
+            valueText: formatDuration(weekly.dailyTotals[hit.index].totalMs),
+            labelText: formatDayLabel(dayKey),
+            rows: topItems.map((item) => ({
+              chipColor: item.color,
+              chipText: item.initials,
+              text: `${item.label} ${formatDuration(item.duration, 'short')}`
+            }))
+          }
         );
       }
     });
@@ -759,7 +795,7 @@ function renderDetail() {
   elements.detailWeekAverage.textContent = `日均 ${formatDuration(detail.averageMs, 'short')}`;
   elements.detailWeekTotal.textContent = `总时长：${formatDuration(detail.totalMs)}`;
 
-  elements.detailMeta.innerHTML = '';
+  elements.detailMeta.replaceChildren();
   const metaRows = detail.kind === 'service'
     ? [
         ['服务', detail.label],
@@ -789,7 +825,16 @@ function renderDetail() {
     .forEach(([label, value]) => {
       const row = document.createElement('div');
       row.className = 'metadata-row';
-      row.innerHTML = `<div class="metadata-label">${label}</div><div class="metadata-value">${value}</div>`;
+      const labelNode = document.createElement('div');
+      labelNode.className = 'metadata-label';
+      labelNode.textContent = label;
+
+      const valueNode = document.createElement('div');
+      valueNode.className = 'metadata-value';
+      valueNode.textContent = value;
+
+      row.appendChild(labelNode);
+      row.appendChild(valueNode);
       elements.detailMeta.appendChild(row);
     });
 
@@ -806,10 +851,13 @@ function renderDetail() {
     tooltip: elements.detailDayTooltip,
     onHover: (hit, rect) => {
       showTooltip(
-        elements.detailDayTooltip,
-        rect,
-        hit,
-        `<span class="tooltip-value">${formatDuration(hit.value * 60000)}</span><span class="tooltip-label">${hit.index} 时 - ${hit.index + 1} 时</span>`
+        {
+          tooltip: elements.detailDayTooltip,
+          rect,
+          chartPoint: hit,
+          valueText: formatDuration(hit.value * 60000),
+          labelText: `${hit.index} 时 - ${hit.index + 1} 时`
+        }
       );
     }
   });
@@ -828,10 +876,13 @@ function renderDetail() {
     onHover: (hit, rect) => {
       const day = detail.lastSevenDays[hit.index];
       showTooltip(
-        elements.detailWeekTooltip,
-        rect,
-        hit,
-        `<span class="tooltip-value">${formatDuration(day.totalMs)}</span><span class="tooltip-label">${formatDayLabel(day.dayKey)}</span>`
+        {
+          tooltip: elements.detailWeekTooltip,
+          rect,
+          chartPoint: hit,
+          valueText: formatDuration(day.totalMs),
+          labelText: formatDayLabel(day.dayKey)
+        }
       );
     }
   });
@@ -879,7 +930,12 @@ async function openDetail(itemKey) {
   }
 
   state.detailItemKey = itemKey;
+  const requestedItemKey = itemKey;
   const detail = await window.usageApi.getDetail(itemKey);
+  if (state.detailItemKey !== requestedItemKey) {
+    return;
+  }
+
   if (!detail) {
     state.detailItemKey = null;
     state.detail = null;

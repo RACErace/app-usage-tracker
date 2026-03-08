@@ -1,6 +1,8 @@
 const BRIDGE_URL = 'http://127.0.0.1:32123/v1/browser-event';
+const BRIDGE_SHARED_HEADER_NAME = 'X-App-Usage-Tracker-Bridge';
+const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
 
-function getBrowserFamily() {
+async function getBrowserFamily() {
   const agent = navigator.userAgent || '';
   if (agent.includes('Edg/')) {
     return 'Edge';
@@ -10,8 +12,14 @@ function getBrowserFamily() {
     return 'Opera';
   }
 
-  if (agent.includes('Brave')) {
-    return 'Brave';
+  if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
+    try {
+      if (await navigator.brave.isBrave()) {
+        return 'Brave';
+      }
+    } catch {
+      // ignore
+    }
   }
 
   return 'Chrome';
@@ -30,9 +38,12 @@ async function postActiveTab(tabId) {
 
     await fetch(BRIDGE_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        [BRIDGE_SHARED_HEADER_NAME]: BRIDGE_SHARED_HEADER_VALUE
+      },
       body: JSON.stringify({
-        browserFamily: getBrowserFamily(),
+        browserFamily: await getBrowserFamily(),
         pageTitle: tab.title || tab.url,
         url: tab.url,
         sentAt: Date.now()

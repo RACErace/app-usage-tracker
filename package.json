@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node scripts/start-detached.js",
     "start:dev": "electron .",
+    "test": "node --test",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:portable": "electron-builder --win portable",
@@ -30,7 +31,8 @@
     }
   },
   "dependencies": {
-    "active-win": "^9.0.0"
+    "active-win": "^9.0.0",
+    "tldts": "^7.0.25"
   },
   "devDependencies": {
     "electron": "^35.0.0",

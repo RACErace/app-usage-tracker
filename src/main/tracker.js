@@ -1,13 +1,18 @@
 const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
+const { getDomain } = require('tldts');
 
 const DATA_VERSION = 3;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
 const BROWSER_EVENT_TTL_MS = 65000;
+const MAX_BRIDGE_REQUEST_BYTES = 16 * 1024;
 const LOOPBACK_HOST = '127.0.0.1';
 const LOOPBACK_PORT = 32123;
+const BRIDGE_SHARED_HEADER_NAME = 'x-app-usage-tracker-bridge';
+const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
+const ALLOWED_BRIDGE_ORIGIN_PREFIXES = ['chrome-extension://', 'moz-extension://'];
 let activeWinLoader = null;
 
 const BROWSER_APP_PATTERNS = [
@@ -18,25 +23,12 @@ const BROWSER_APP_PATTERNS = [
   { family: 'Firefox', names: ['firefox'] }
 ];
 
-const MULTI_PART_TLDS = new Set([
-  'com.cn',
-  'net.cn',
-  'org.cn',
-  'gov.cn',
-  'edu.cn',
-  'co.uk',
-  'org.uk',
-  'gov.uk',
-  'com.au',
-  'net.au',
-  'org.au',
-  'co.jp',
-  'com.hk',
-  'com.tw'
-]);
+function padNumber(value) {
+  return String(value).padStart(2, '0');
+}
 
 function getDayKey(date) {
-  return date.toISOString().slice(0, 10);
+  return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
 }
 
 function sanitizeText(value, fallback = '') {
@@ -105,17 +97,39 @@ function getRootDomain(hostname) {
     return normalized;
   }
 
-  const segments = normalized.split('.').filter(Boolean);
-  if (segments.length <= 2) {
-    return normalized;
+  return getDomain(normalized, { allowPrivateDomains: true }) || normalized;
+}
+
+function isAllowedBridgeOrigin(origin) {
+  const normalizedOrigin = sanitizeText(origin).toLowerCase();
+  if (!normalizedOrigin) {
+    return false;
   }
 
-  const suffix = segments.slice(-2).join('.');
-  if (MULTI_PART_TLDS.has(suffix) && segments.length >= 3) {
-    return segments.slice(-3).join('.');
+  return ALLOWED_BRIDGE_ORIGIN_PREFIXES.some((prefix) => normalizedOrigin.startsWith(prefix));
+}
+
+function getBridgeResponseHeaders(origin, extraHeaders = {}) {
+  const headers = {
+    Vary: 'Origin',
+    ...extraHeaders
+  };
+
+  if (isAllowedBridgeOrigin(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
   }
 
-  return segments.slice(-2).join('.');
+  return headers;
+}
+
+function hasJsonContentType(contentType) {
+  return sanitizeText(contentType).toLowerCase().startsWith('application/json');
+}
+
+function isBridgeRequestAuthorized(headers) {
+  return isAllowedBridgeOrigin(headers?.origin)
+    && headers?.[BRIDGE_SHARED_HEADER_NAME] === BRIDGE_SHARED_HEADER_VALUE
+    && hasJsonContentType(headers?.['content-type']);
 }
 
 function getDomainDisplayName(hostname) {
@@ -528,6 +542,9 @@ class UsageTracker {
     this.saveTimer = null;
     this.httpServer = null;
     this.browserEvents = new BrowserEventCache();
+    this.serializedDayCache = new Map();
+    this.sortedDayKeysCache = [];
+    this.sortedDayKeysDirty = true;
   }
 
   async init() {
@@ -560,11 +577,13 @@ class UsageTracker {
       const parsed = JSON.parse(fileContent);
       const migrated = migrateUsageData(parsed);
       this.data = migrated.data;
+      this.resetDerivedCaches();
       if (migrated.changed) {
         await this.save();
       }
     } catch {
       this.data = createEmptyData();
+      this.resetDerivedCaches();
     }
   }
 
@@ -589,35 +608,93 @@ class UsageTracker {
   }
 
   async startBrowserBridge() {
-    this.httpServer = http.createServer(async (request, response) => {
+    this.httpServer = http.createServer((request, response) => {
+      const origin = request.headers.origin;
+      const writeJson = (statusCode, payload, extraHeaders = {}) => {
+        response.writeHead(statusCode, getBridgeResponseHeaders(origin, {
+          'Content-Type': 'application/json',
+          ...extraHeaders
+        }));
+        response.end(JSON.stringify(payload));
+      };
+
       if (request.method === 'OPTIONS') {
+        if (!isAllowedBridgeOrigin(origin)) {
+          response.writeHead(403, { Vary: 'Origin' });
+          response.end();
+          return;
+        }
+
         response.writeHead(204, {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+          ...getBridgeResponseHeaders(origin),
+          'Access-Control-Allow-Headers': `Content-Type, ${BRIDGE_SHARED_HEADER_NAME}`,
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Max-Age': '600'
         });
         response.end();
         return;
       }
 
       if (request.method !== 'POST' || request.url !== '/v1/browser-event') {
-        response.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        response.end(JSON.stringify({ ok: false }));
+        writeJson(404, { ok: false });
+        return;
+      }
+
+      if (!isBridgeRequestAuthorized(request.headers)) {
+        writeJson(403, { ok: false });
+        request.resume();
+        return;
+      }
+
+      const contentLength = Number(request.headers['content-length']);
+      if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_REQUEST_BYTES) {
+        writeJson(413, { ok: false });
+        request.resume();
         return;
       }
 
       const chunks = [];
-      request.on('data', (chunk) => chunks.push(chunk));
-      request.on('end', async () => {
+      let receivedBytes = 0;
+      let completed = false;
+
+      request.on('data', (chunk) => {
+        if (completed) {
+          return;
+        }
+
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_BRIDGE_REQUEST_BYTES) {
+          completed = true;
+          writeJson(413, { ok: false });
+          request.destroy();
+          return;
+        }
+
+        chunks.push(chunk);
+      });
+
+      request.on('error', () => {
+        if (completed) {
+          return;
+        }
+
+        completed = true;
+        writeJson(400, { ok: false });
+      });
+
+      request.on('end', () => {
+        if (completed) {
+          return;
+        }
+
+        completed = true;
         try {
           const body = Buffer.concat(chunks).toString('utf8');
           const payload = JSON.parse(body);
           this.browserEvents.upsert(payload);
-          response.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-          response.end(JSON.stringify({ ok: true }));
+          writeJson(200, { ok: true });
         } catch {
-          response.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-          response.end(JSON.stringify({ ok: false }));
+          writeJson(400, { ok: false });
         }
       });
     });
@@ -736,6 +813,7 @@ class UsageTracker {
     day.totalMs += durationMs;
     item.totalMs += durationMs;
     item.lastSeenAt = Date.now();
+    this.serializedDayCache.delete(dayKey);
 
     let remaining = durationMs;
     let cursor = new Date(date);
@@ -754,6 +832,7 @@ class UsageTracker {
   ensureDay(dayKey) {
     if (!this.data.days[dayKey]) {
       this.data.days[dayKey] = { totalMs: 0, items: {} };
+      this.sortedDayKeysDirty = true;
     }
 
     return this.data.days[dayKey];
@@ -797,29 +876,54 @@ class UsageTracker {
   }
 
   getSortedDayKeys() {
-    return Object.keys(this.data.days).sort();
+    if (this.sortedDayKeysDirty) {
+      this.sortedDayKeysCache = Object.keys(this.data.days).sort();
+      this.sortedDayKeysDirty = false;
+    }
+
+    return this.sortedDayKeysCache;
+  }
+
+  resetDerivedCaches() {
+    this.serializedDayCache.clear();
+    this.sortedDayKeysCache = [];
+    this.sortedDayKeysDirty = true;
+  }
+
+  getSerializedDay(dayKey) {
+    if (this.serializedDayCache.has(dayKey)) {
+      return this.serializedDayCache.get(dayKey);
+    }
+
+    const day = this.data.days[dayKey] || { totalMs: 0, items: {} };
+    const serialized = {
+      totalMs: day.totalMs,
+      hourly: this.mergeDayHourly(day),
+      items: Object.values(day.items)
+        .sort((left, right) => right.totalMs - left.totalMs)
+        .map((item) => cloneItem(item))
+    };
+
+    this.serializedDayCache.set(dayKey, serialized);
+    return serialized;
   }
 
   getSnapshot() {
     const dayKeys = this.getSortedDayKeys();
     const latestDayKey = dayKeys[dayKeys.length - 1] || getDayKey(new Date());
-    const currentDay = this.data.days[latestDayKey] || { totalMs: 0, items: {} };
     const recentDays = dayKeys.slice(-7);
     const serializedDays = Object.fromEntries(
-      dayKeys.map((dayKey) => {
-        const day = this.data.days[dayKey];
-        const items = Object.values(day.items).sort((left, right) => right.totalMs - left.totalMs).map((item) => cloneItem(item));
-        return [dayKey, { totalMs: day.totalMs, hourly: this.mergeDayHourly(day), items }];
-      })
+      dayKeys.map((dayKey) => [dayKey, this.getSerializedDay(dayKey)])
     );
+    const currentDay = serializedDays[latestDayKey] || { totalMs: 0, hourly: new Array(24).fill(0), items: [] };
 
     const weeklyMap = new Map();
     let weeklyTotalMs = 0;
 
     for (const dayKey of recentDays) {
-      const day = this.data.days[dayKey];
+      const day = serializedDays[dayKey];
       weeklyTotalMs += day.totalMs;
-      for (const item of Object.values(day.items)) {
+      for (const item of day.items) {
         const existing = weeklyMap.get(item.key);
         if (!existing) {
           weeklyMap.set(item.key, {
@@ -840,8 +944,6 @@ class UsageTracker {
         }
       }
     }
-
-    const currentItems = Object.values(currentDay.items).sort((left, right) => right.totalMs - left.totalMs);
     const weeklyItems = [...weeklyMap.values()].sort((left, right) => right.totalMs - left.totalMs);
 
     return {
@@ -855,14 +957,14 @@ class UsageTracker {
         days: serializedDays,
         selectedDayKey: latestDayKey,
         totalMs: currentDay.totalMs,
-        hourly: this.mergeDayHourly(currentDay),
-        items: currentItems
+        hourly: [...currentDay.hourly],
+        items: currentDay.items
       },
       weekly: {
         dayKeys: recentDays,
         totalMs: weeklyTotalMs,
         averageMs: recentDays.length ? Math.round(weeklyTotalMs / recentDays.length) : 0,
-        dailyTotals: recentDays.map((dayKey) => ({ dayKey, totalMs: this.data.days[dayKey].totalMs })),
+        dailyTotals: recentDays.map((dayKey) => ({ dayKey, totalMs: serializedDays[dayKey].totalMs })),
         items: weeklyItems
       }
     };
@@ -927,5 +1029,14 @@ module.exports = {
   migrateUsageData,
   migrateUsageDataFile,
   LOOPBACK_PORT,
-  LOOPBACK_HOST
+  LOOPBACK_HOST,
+  BRIDGE_SHARED_HEADER_NAME,
+  BRIDGE_SHARED_HEADER_VALUE,
+  MAX_BRIDGE_REQUEST_BYTES,
+  __testables: {
+    getDayKey,
+    getRootDomain,
+    isAllowedBridgeOrigin,
+    isBridgeRequestAuthorized
+  }
 };
