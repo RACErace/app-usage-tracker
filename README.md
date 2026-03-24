@@ -53,6 +53,20 @@ npm start
 npm run start:dev
 ```
 
+CLI 查询：
+
+```powershell
+npm run query -- days --format json
+npm run query -- top --range day --day latest --limit 10 --format json
+npm run query -- search --query "ChatGPT" --format json
+npm run query -- detail --key service:chatgpt --format json
+```
+
+- `npm run query -- ...` 会读取本地 `usage-data.json`，适合脚本、Agent、CLI 直接查询
+- 优先使用 `--format json`，便于 AI / 自动化消费
+- 如果数据文件不在默认位置，可通过 `--data-file <path>`、`APP_USAGE_TRACKER_DATA_FILE`、`--user-data-dir <dir>`、`APP_USAGE_TRACKER_USER_DATA_DIR` 指定
+- 已提供可直接给 Agent 使用的 skill：`skills/app-usage-tracker-query/SKILL.md`
+
 打包：
 
 ```powershell
@@ -66,14 +80,15 @@ npm run dist
 
 打包产物默认在 `dist/` 目录下。若你要“发一个 exe 给别人直接双击运行”，优先使用 `npm run dist:portable`。
 
-仓库已包含 GitHub Actions 工作流：推送到 `main` 后会自动在 GitHub Actions 中构建 Windows 安装版 exe 和便携版 exe。构建完成后，可在对应 workflow run 的 Artifacts 中下载。
+仓库已包含 GitHub Actions 工作流：推送到 `main` 后会自动在 GitHub Actions 中构建 Windows 安装版 exe、便携版 exe，以及浏览器扩展压缩包。构建完成后，可在对应 workflow run 的 Artifacts 中下载。
 
-如果推送形如 `v1.1.1` 的 tag，工作流还会自动创建同名 GitHub Release，并把以下文件直接挂到 Release 附件：
+如果推送形如 `v1.2.0` 的 tag，工作流还会自动创建同名 GitHub Release，并把以下文件直接挂到 Release 附件：
 
-- `App-Usage-Tracker-1.1.1-installer.exe`
-- `App-Usage-Tracker-1.1.1-portable.exe`
+- `App-Usage-Tracker-1.2.0-installer.exe`
+- `App-Usage-Tracker-1.2.0-portable.exe`
+- `App-Usage-Tracker-1.2.0-browser-extension.zip`
 
-普通分支构建的 Actions Artifacts 也会按版本号命名，例如 `app-usage-tracker-1.1.1-windows`。
+普通分支构建的 Actions Artifacts 也会按版本号命名，例如 `app-usage-tracker-1.2.0-windows`。
 
 如果打包时报错 `Could not find any Visual Studio installation to use`，说明当前机器缺少 C++ 构建工具。这个项目依赖 `active-win`，在打包 Electron 应用时需要为 Electron 版本重编译原生模块。
 
@@ -107,6 +122,7 @@ http://127.0.0.1:32123/v1/browser-event
 - 使用数据：`%APPDATA%/app-usage-tracker/usage-data.json`
 - 图标缓存：`%APPDATA%/app-usage-tracker/icon-cache/`
 - Windows 运行时窗口图标、托盘图标、打包图标当前都使用根目录的 `app.ico`
+- CLI 默认也会读取 `%APPDATA%/app-usage-tracker/usage-data.json`
 
 ## 已知限制
 

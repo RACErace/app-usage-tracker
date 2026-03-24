@@ -1,11 +1,15 @@
 {
   "name": "app-usage-tracker",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Desktop app usage tracker with browser page awareness",
   "main": "src/main/main.js",
+  "bin": {
+    "app-usage-tracker-cli": "src/cli/query.js"
+  },
   "scripts": {
     "start": "node scripts/start-detached.js",
     "start:dev": "electron .",
+    "query": "node src/cli/query.js",
     "test": "node --test",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
@@ -17,6 +21,7 @@
     "productName": "App Usage Tracker",
     "files": [
       "src/**/*",
+      "skills/**/*",
       "browser-extension/**/*",
       "app.ico",
       "README.md",
