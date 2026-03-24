@@ -5,13 +5,19 @@ description: Query local App Usage Tracker history through the bundled CLI. Use 
 
 # App Usage Tracker Query
 
-Use the repository CLI to read local usage history without opening the Electron UI. Prefer JSON output so the result can be parsed directly by the agent.
+Use the bundled CLI to read local usage history without opening the Electron UI. Prefer JSON output so the result can be parsed directly by the agent.
 
 ## Command Choice
 
-Use `app-usage-tracker-cli` when it is on `PATH`.
+Use `app-usage-tracker-cli` when it is on `PATH`. This is the preferred command for the Windows installer build.
 
-Otherwise, from this repository root use:
+If the app was installed but the current shell was opened before installation, reopen the shell first. If needed, you can also run the wrapper directly from the install directory:
+
+```powershell
+C:\Users\<username>\AppData\Local\Programs\app-usage-tracker\app-usage-tracker-cli.cmd <command> ...
+```
+
+If you are working from the repository instead of an installed app, use:
 
 ```powershell
 node src/cli/query.js <command> ...
@@ -31,37 +37,37 @@ Do not guess hashed item keys. Use `search` to resolve them first.
 List available days:
 
 ```powershell
-node src/cli/query.js days --format json
+app-usage-tracker-cli days --format json
 ```
 
 Get the top items for the latest tracked day:
 
 ```powershell
-node src/cli/query.js top --range day --day latest --limit 10 --format json
+app-usage-tracker-cli top --range day --day latest --limit 10 --format json
 ```
 
 Get the recent 7-day ranking:
 
 ```powershell
-node src/cli/query.js top --range week --limit 10 --format json
+app-usage-tracker-cli top --range week --limit 10 --format json
 ```
 
 Search items by label, host, page title, URL, or key:
 
 ```powershell
-node src/cli/query.js search --query "ChatGPT" --limit 10 --format json
+app-usage-tracker-cli search --query "ChatGPT" --limit 10 --format json
 ```
 
 Fetch detailed history for one item:
 
 ```powershell
-node src/cli/query.js detail --key "service:chatgpt" --format json
+app-usage-tracker-cli detail --key "service:chatgpt" --format json
 ```
 
 Read the full serialized snapshot:
 
 ```powershell
-node src/cli/query.js snapshot --format json
+app-usage-tracker-cli snapshot --format json
 ```
 
 ## Storage Overrides
@@ -80,3 +86,4 @@ On Windows, the default data file is `%APPDATA%/app-usage-tracker/usage-data.jso
 - The CLI reads the on-disk `usage-data.json`; the newest few seconds of live activity may not appear until the desktop app saves.
 - Use `--format json` for agent workflows.
 - If `detail --query` is ambiguous, run `search` first and then call `detail --key`.
+- The installer adds the app install directory to the current user's `PATH`, but a shell opened before installation may need to be restarted before the command is available.

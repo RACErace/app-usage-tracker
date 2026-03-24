@@ -1,6 +1,6 @@
 {
   "name": "app-usage-tracker",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Desktop app usage tracker with browser page awareness",
   "main": "src/main/main.js",
   "bin": {
@@ -27,8 +27,17 @@
       "README.md",
       "package.json"
     ],
+    "extraFiles": [
+      {
+        "from": "assets/app-usage-tracker-cli.cmd",
+        "to": "app-usage-tracker-cli.cmd"
+      }
+    ],
     "directories": {
       "buildResources": "assets"
+    },
+    "nsis": {
+      "include": "assets/installer.nsh"
     },
     "win": {
       "icon": "app.ico",
