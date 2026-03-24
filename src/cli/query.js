@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { parseArgs } = require('node:util');
@@ -32,6 +33,18 @@ function normalizeSearchText(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
+}
+
+function normalizeHiddenItemKeys(hiddenItemKeys) {
+  if (!Array.isArray(hiddenItemKeys)) {
+    return [];
+  }
+
+  return [...new Set(
+    hiddenItemKeys
+      .filter((value) => typeof value === 'string' && value.trim())
+      .map((value) => value.trim())
+  )];
 }
 
 function getDefaultUserDataDir() {
@@ -95,7 +108,136 @@ async function loadTracker(values) {
   tracker.dataFilePath = paths.dataFilePath;
   await tracker.load();
 
-  return { tracker, paths };
+  const settings = await loadSettings(paths);
+  const hiddenItemKeySet = new Set(settings.hiddenItemKeys);
+  const snapshot = filterSnapshot(tracker.getSnapshot(), hiddenItemKeySet);
+
+  return {
+    tracker,
+    paths,
+    settings,
+    hiddenItemKeySet,
+    snapshot
+  };
+}
+
+async function loadSettings(paths) {
+  const settingsFilePath = path.join(paths.userDataPath, 'settings.json');
+
+  try {
+    const rawSettings = await fs.readFile(settingsFilePath, 'utf8');
+    const parsed = JSON.parse(rawSettings);
+    return {
+      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys)
+    };
+  } catch {
+    return {
+      hiddenItemKeys: []
+    };
+  }
+}
+
+function mergeHourly(items) {
+  const hourly = new Array(24).fill(0);
+
+  for (const item of items) {
+    (item.hourly || []).forEach((value, index) => {
+      hourly[index] += Number(value) || 0;
+    });
+  }
+
+  return hourly;
+}
+
+function filterDay(day, hiddenItemKeySet) {
+  const items = (day?.items || []).filter((item) => !hiddenItemKeySet.has(item.key));
+
+  return {
+    totalMs: items.reduce((sum, item) => sum + (Number(item.totalMs) || 0), 0),
+    items,
+    hourly: mergeHourly(items)
+  };
+}
+
+function buildFilteredWeekly(snapshot, hiddenItemKeySet) {
+  const dayKeys = snapshot?.weekly?.dayKeys || [];
+  const weeklyMap = new Map();
+  let totalMs = 0;
+
+  const dailyTotals = dayKeys.map((dayKey) => {
+    const filteredDay = filterDay(snapshot?.daily?.days?.[dayKey], hiddenItemKeySet);
+    totalMs += filteredDay.totalMs;
+
+    filteredDay.items.forEach((item) => {
+      const existing = weeklyMap.get(item.key);
+      if (!existing) {
+        weeklyMap.set(item.key, {
+          ...item,
+          totalMs: item.totalMs,
+          hourly: [...(item.hourly || new Array(24).fill(0))],
+          byDay: { [dayKey]: item.totalMs }
+        });
+        return;
+      }
+
+      existing.totalMs += item.totalMs;
+      existing.byDay[dayKey] = item.totalMs;
+      existing.hourly = existing.hourly.map((value, index) => value + ((item.hourly && item.hourly[index]) || 0));
+      existing.label = item.label;
+      existing.subtitle = item.subtitle;
+      existing.url = item.url || existing.url;
+      existing.host = item.host || existing.host;
+      existing.pageTitle = item.pageTitle || existing.pageTitle;
+      existing.appName = item.appName || existing.appName;
+      existing.executablePath = item.executablePath || existing.executablePath;
+      existing.browserFamily = item.browserFamily || existing.browserFamily;
+      existing.lastSeenAt = item.lastSeenAt || existing.lastSeenAt;
+    });
+
+    return { dayKey, totalMs: filteredDay.totalMs };
+  });
+
+  return {
+    dayKeys,
+    totalMs,
+    averageMs: dayKeys.length ? Math.round(totalMs / dayKeys.length) : 0,
+    dailyTotals,
+    items: [...weeklyMap.values()].sort((left, right) => right.totalMs - left.totalMs)
+  };
+}
+
+function filterSnapshot(snapshot, hiddenItemKeySet) {
+  if (!hiddenItemKeySet.size) {
+    return snapshot;
+  }
+
+  const filteredDays = Object.fromEntries(
+    Object.entries(snapshot?.daily?.days || {}).map(([dayKey, day]) => [dayKey, filterDay(day, hiddenItemKeySet)])
+  );
+  const latestDayKey = snapshot?.meta?.latestDayKey || null;
+  const currentDay = filteredDays[latestDayKey] || {
+    totalMs: 0,
+    hourly: new Array(24).fill(0),
+    items: []
+  };
+
+  return {
+    ...snapshot,
+    daily: {
+      ...snapshot.daily,
+      days: filteredDays,
+      totalMs: currentDay.totalMs,
+      hourly: [...currentDay.hourly],
+      items: currentDay.items
+    },
+    weekly: buildFilteredWeekly({
+      ...snapshot,
+      daily: {
+        ...snapshot.daily,
+        days: filteredDays
+      }
+    }, hiddenItemKeySet)
+  };
 }
 
 function buildCatalog(snapshot) {
@@ -303,8 +445,7 @@ async function runDays(args) {
   }
 
   const format = assertFormat(values);
-  const { tracker, paths } = await loadTracker(values);
-  const snapshot = tracker.getSnapshot();
+  const { paths, snapshot } = await loadTracker(values);
   const payload = {
     kind: 'days',
     dataFilePath: paths.dataFilePath,
@@ -349,8 +490,7 @@ async function runTop(args) {
     throw new CliError(`Unsupported range "${range}". Use "day" or "week".`);
   }
 
-  const { tracker, paths } = await loadTracker(values);
-  const snapshot = tracker.getSnapshot();
+  const { paths, snapshot } = await loadTracker(values);
 
   if (range === 'week') {
     const payload = {
@@ -425,8 +565,7 @@ async function runSearch(args) {
 
   const format = assertFormat(values);
   const limit = parseLimit(values.limit, 10);
-  const { tracker, paths } = await loadTracker(values);
-  const snapshot = tracker.getSnapshot();
+  const { paths, snapshot } = await loadTracker(values);
   const catalog = buildCatalog(snapshot);
   const matches = searchCatalog(catalog, values.query, limit);
   const payload = {
@@ -491,8 +630,7 @@ async function runDetail(args) {
   }
 
   const format = assertFormat(values);
-  const { tracker, paths } = await loadTracker(values);
-  const snapshot = tracker.getSnapshot();
+  const { tracker, paths, snapshot, hiddenItemKeySet } = await loadTracker(values);
   let itemKey = values.key;
 
   if (!itemKey) {
@@ -509,6 +647,10 @@ async function runDetail(args) {
     } else {
       throw new CliError(getAmbiguousMatchMessage(values.query, matches));
     }
+  }
+
+  if (hiddenItemKeySet.has(itemKey)) {
+    throw new CliError(`Item "${itemKey}" was not found.`);
   }
 
   const detail = tracker.getItemDetail(itemKey);
@@ -562,8 +704,7 @@ async function runSnapshot(args) {
   }
 
   const format = assertFormat(values);
-  const { tracker, paths } = await loadTracker(values);
-  const snapshot = tracker.getSnapshot();
+  const { paths, snapshot } = await loadTracker(values);
 
   if (format === 'json') {
     process.stdout.write(toJsonOutput({
@@ -622,8 +763,10 @@ if (require.main === module) {
 
 module.exports = {
   buildCatalog,
+  filterSnapshot,
   getSearchScore,
   main,
+  normalizeHiddenItemKeys,
   resolveStoragePaths,
   searchCatalog
 };

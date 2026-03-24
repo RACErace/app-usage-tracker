@@ -82,14 +82,17 @@ jobs:
           $installerTarget = "App-Usage-Tracker-$version-installer.exe"
           $portableTarget = "App-Usage-Tracker-$version-portable.exe"
           $extensionZipTarget = "App-Usage-Tracker-$version-browser-extension.zip"
+          $skillsZipTarget = "App-Usage-Tracker-$version-skills.zip"
 
           Rename-Item -Path $installer.FullName -NewName $installerTarget -Force
           Rename-Item -Path $portable.FullName -NewName $portableTarget -Force
           Compress-Archive -Path browser-extension\* -DestinationPath (Join-Path 'dist' $extensionZipTarget) -Force
+          Compress-Archive -Path skills\* -DestinationPath (Join-Path 'dist' $skillsZipTarget) -Force
 
           "installer_path=dist/$installerTarget" >> $env:GITHUB_OUTPUT
           "portable_path=dist/$portableTarget" >> $env:GITHUB_OUTPUT
           "extension_zip_path=dist/$extensionZipTarget" >> $env:GITHUB_OUTPUT
+          "skills_zip_path=dist/$skillsZipTarget" >> $env:GITHUB_OUTPUT
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -99,6 +102,7 @@ jobs:
             ${{ steps.artifacts.outputs.installer_path }}
             ${{ steps.artifacts.outputs.portable_path }}
             ${{ steps.artifacts.outputs.extension_zip_path }}
+            ${{ steps.artifacts.outputs.skills_zip_path }}
             dist/latest*.yml
             dist/builder-effective-config.yaml
           if-no-files-found: error
@@ -112,6 +116,7 @@ jobs:
             ${{ steps.artifacts.outputs.installer_path }}
             ${{ steps.artifacts.outputs.portable_path }}
             ${{ steps.artifacts.outputs.extension_zip_path }}
+            ${{ steps.artifacts.outputs.skills_zip_path }}
           generate_release_notes: true
           draft: false
           prerelease: false
