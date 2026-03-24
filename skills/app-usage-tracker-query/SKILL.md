@@ -84,6 +84,7 @@ On Windows, the default data file is `%APPDATA%/app-usage-tracker/usage-data.jso
 ## Notes
 
 - The CLI reads the on-disk `usage-data.json`; the newest few seconds of live activity may not appear until the desktop app saves.
+- The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, searches, and snapshots.
 - Use `--format json` for agent workflows.
 - If `detail --query` is ambiguous, run `search` first and then call `detail --key`.
 - The installer adds the app install directory to the current user's `PATH`, but a shell opened before installation may need to be restarted before the command is available.

@@ -48,7 +48,7 @@ function createItem({
   };
 }
 
-async function createFixtureDataFile() {
+async function createFixtureDataFile({ hiddenItemKeys = [] } = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'app-usage-tracker-cli-'));
   const dataFilePath = path.join(tempDir, 'usage-data.json');
   const chatgptDayOne = createItem({
@@ -121,6 +121,9 @@ async function createFixtureDataFile() {
         }
       }
     }
+  }, null, 2), 'utf8');
+  await fs.writeFile(path.join(tempDir, 'settings.json'), JSON.stringify({
+    hiddenItemKeys
   }, null, 2), 'utf8');
 
   return {
@@ -196,6 +199,51 @@ test('detail command returns full history for an item key', async () => {
         ['2026-03-24', 5400000]
       ]
     );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('days command totals only include visible items from settings', async () => {
+  const fixture = await createFixtureDataFile({
+    hiddenItemKeys: ['service:chatgpt', 'app:vscode:abc123']
+  });
+
+  try {
+    const result = runCli(['days', '--format', 'json', '--data-file', fixture.dataFilePath]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const payload = JSON.parse(result.stdout);
+    assert.deepEqual(payload.availableDays, [
+      {
+        dayKey: '2026-03-23',
+        totalMs: 1800000,
+        totalMinutes: 30
+      },
+      {
+        dayKey: '2026-03-24',
+        totalMs: 0,
+        totalMinutes: 0
+      }
+    ]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('search command excludes items hidden by settings', async () => {
+  const fixture = await createFixtureDataFile({
+    hiddenItemKeys: ['service:chatgpt']
+  });
+
+  try {
+    const result = runCli(['search', '--query', 'chatgpt', '--format', 'json', '--data-file', fixture.dataFilePath]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.kind, 'search');
+    assert.equal(payload.totalMatches, 0);
+    assert.deepEqual(payload.matches, []);
   } finally {
     await fixture.cleanup();
   }
