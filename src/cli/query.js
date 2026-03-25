@@ -294,6 +294,14 @@ function summarizeItem(item) {
     host: item.host,
     url: item.url,
     executablePath: item.executablePath,
+    trackingMode: item.trackingMode || '',
+    trackingSource: item.trackingSource || '',
+    sourceAppUserModelId: item.sourceAppUserModelId || '',
+    mediaTitle: item.mediaTitle || '',
+    mediaArtist: item.mediaArtist || '',
+    mediaAlbumTitle: item.mediaAlbumTitle || '',
+    playbackStatus: item.playbackStatus || '',
+    playbackType: item.playbackType || '',
     totalMs: Number(item.totalMs) || 0,
     totalMinutes: toMinutes(item.totalMs),
     color: item.color,
@@ -309,6 +317,8 @@ function getItemSearchFields(item) {
     item.appName,
     item.host,
     item.pageTitle,
+    item.mediaTitle,
+    item.mediaArtist,
     item.url,
     item.windowTitle
   ]

@@ -814,6 +814,10 @@ function renderDetail() {
       ]
     : [
         ['应用', detail.appName],
+        ['计时方式', detail.trackingMode === 'playback' ? 'SMTC 播放状态' : '前台窗口'],
+        ['最近播放内容', detail.mediaTitle],
+        ['最近播放艺人', detail.mediaArtist],
+        ['来源标识', detail.sourceAppUserModelId],
         ['页面标题', detail.pageTitle || detail.windowTitle],
         ['网页地址', detail.url],
         ['域名', detail.host],
