@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('usageApi', {
   exportBackup: () => ipcRenderer.invoke('backup:export'),
   importBackup: () => ipcRenderer.invoke('backup:import'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
+  setAutoBackupSettings: (settings) => ipcRenderer.invoke('settings:set-auto-backup', settings),
   setCloseWindowAction: (closeWindowAction) => ipcRenderer.invoke('settings:set-close-window-action', closeWindowAction),
   setHiddenItemKeys: (hiddenItemKeys) => ipcRenderer.invoke('settings:set-hidden-item-keys', hiddenItemKeys),
   forcePoll: () => ipcRenderer.invoke('usage:force-poll'),

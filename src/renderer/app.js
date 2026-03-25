@@ -15,6 +15,7 @@ const state = {
   unsubscribe: null,
   updatingHiddenItems: false,
   updatingCloseAction: false,
+  updatingAutoBackup: false,
   backupBusy: false,
   backupBusyAction: '',
   backupStatus: { ...DEFAULT_BACKUP_STATUS }
@@ -61,6 +62,13 @@ const elements = {
   autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   autoLaunchSwitch: document.getElementById('auto-launch-switch'),
   autoLaunchDot: document.getElementById('auto-launch-dot'),
+  autoBackupToggle: document.getElementById('auto-backup-toggle'),
+  autoBackupSwitch: document.getElementById('auto-backup-switch'),
+  autoBackupDot: document.getElementById('auto-backup-dot'),
+  autoBackupStatus: document.getElementById('auto-backup-status'),
+  autoBackupIntervalValue: document.getElementById('auto-backup-interval-value'),
+  autoBackupIntervalUnit: document.getElementById('auto-backup-interval-unit'),
+  autoBackupPathText: document.getElementById('auto-backup-path-text'),
   closeActionStatus: document.getElementById('close-action-status'),
   closeActionButtons: [...document.querySelectorAll('[data-close-action]')],
   exportBackupButton: document.getElementById('export-backup-button'),
@@ -177,6 +185,42 @@ function setBackupStatus(status) {
     ...DEFAULT_BACKUP_STATUS,
     ...(status || {})
   };
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getAutoBackupIntervalParts(intervalMinutes) {
+  const numericValue = Math.max(Math.round(Number(intervalMinutes) || 0), 60);
+  if (numericValue >= 1440 && numericValue % 1440 === 0) {
+    return {
+      value: numericValue / 1440,
+      unit: 'days'
+    };
+  }
+
+  return {
+    value: Math.max(1, Math.round(numericValue / 60)),
+    unit: 'hours'
+  };
+}
+
+function getAutoBackupIntervalMinutesFromParts(value, unit) {
+  const safeUnit = unit === 'days' ? 'days' : 'hours';
+  const rawValue = Number.parseInt(String(value), 10);
+  const maxValue = safeUnit === 'days' ? 365 : 24 * 365;
+  const normalizedValue = clamp(Number.isFinite(rawValue) ? rawValue : 1, 1, maxValue);
+  return safeUnit === 'days'
+    ? normalizedValue * 24 * 60
+    : normalizedValue * 60;
+}
+
+function formatAutoBackupInterval(intervalMinutes) {
+  const parts = getAutoBackupIntervalParts(intervalMinutes);
+  return parts.unit === 'days'
+    ? `每 ${parts.value} 天`
+    : `每 ${parts.value} 小时`;
 }
 
 function getInitials(item) {
@@ -741,6 +785,13 @@ function showScreen(screen) {
 function renderSettingsState() {
   const snapshot = state.snapshot;
   const enabled = Boolean(state.settings?.autoLaunchEnabled);
+  const autoBackupEnabled = Boolean(state.settings?.autoBackupEnabled);
+  const autoBackupIntervalMinutes = Number(state.settings?.autoBackupIntervalMinutes) || 1440;
+  const autoBackupParts = getAutoBackupIntervalParts(autoBackupIntervalMinutes);
+  const lastAutoBackupAt = formatDateTime(state.settings?.lastAutoBackupAt);
+  const nextAutoBackupAt = formatDateTime(state.settings?.nextAutoBackupAt);
+  const autoBackupDirectory = state.settings?.autoBackupDirectory || '';
+  const autoBackupError = state.settings?.lastAutoBackupError || '';
   const closeAction = state.settings?.closeWindowAction || 'tray';
   const backupBusyText = state.backupBusy
     ? (state.backupBusyAction === 'import' ? '正在导入并恢复备份...' : '正在导出备份...')
@@ -755,6 +806,30 @@ function renderSettingsState() {
   elements.autoLaunchDot.classList.toggle('active', enabled);
   elements.autoLaunchStatus.textContent = enabled ? '已开启开机自启动' : '未开启开机自启动';
   elements.autoLaunchToggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+
+  elements.autoBackupSwitch.classList.toggle('active', autoBackupEnabled);
+  elements.autoBackupDot.classList.toggle('active', autoBackupEnabled && !autoBackupError);
+  elements.autoBackupDot.classList.toggle('warning', Boolean(autoBackupError));
+  elements.autoBackupToggle.setAttribute('aria-checked', autoBackupEnabled ? 'true' : 'false');
+  elements.autoBackupToggle.disabled = state.updatingAutoBackup;
+  elements.autoBackupIntervalValue.value = String(autoBackupParts.value);
+  elements.autoBackupIntervalValue.disabled = state.updatingAutoBackup;
+  elements.autoBackupIntervalUnit.value = autoBackupParts.unit;
+  elements.autoBackupIntervalUnit.disabled = state.updatingAutoBackup;
+
+  if (autoBackupError) {
+    elements.autoBackupStatus.textContent = `上次自动备份失败：${autoBackupError}`;
+  } else if (autoBackupEnabled && lastAutoBackupAt && nextAutoBackupAt) {
+    elements.autoBackupStatus.textContent = `${formatAutoBackupInterval(autoBackupIntervalMinutes)}自动备份，上次成功于 ${lastAutoBackupAt}，下次计划 ${nextAutoBackupAt}`;
+  } else if (autoBackupEnabled && nextAutoBackupAt) {
+    elements.autoBackupStatus.textContent = `${formatAutoBackupInterval(autoBackupIntervalMinutes)}自动备份，首次计划 ${nextAutoBackupAt}`;
+  } else {
+    elements.autoBackupStatus.textContent = '自动备份已关闭';
+  }
+
+  elements.autoBackupPathText.textContent = autoBackupDirectory
+    ? `自动备份目录：${autoBackupDirectory}`
+    : '自动备份目录读取中';
 
   elements.closeActionStatus.textContent = closeActionLabels[closeAction] || closeActionLabels.tray;
   elements.closeActionButtons.forEach((button) => {
@@ -1194,6 +1269,48 @@ async function handleBackupImport() {
   renderSettingsScreen();
 }
 
+async function updateAutoBackupSettings(partialSettings = {}) {
+  if (state.updatingAutoBackup) {
+    return;
+  }
+
+  const previousSettings = state.settings || {
+    autoLaunchEnabled: false,
+    hiddenItemKeys: [],
+    closeWindowAction: 'tray',
+    autoBackupEnabled: false,
+    autoBackupIntervalMinutes: 1440
+  };
+  const nextSettings = {
+    autoBackupEnabled: Object.prototype.hasOwnProperty.call(partialSettings, 'autoBackupEnabled')
+      ? Boolean(partialSettings.autoBackupEnabled)
+      : Boolean(previousSettings.autoBackupEnabled),
+    autoBackupIntervalMinutes: Object.prototype.hasOwnProperty.call(partialSettings, 'autoBackupIntervalMinutes')
+      ? clamp(Math.round(Number(partialSettings.autoBackupIntervalMinutes) || 1440), 60, 365 * 24 * 60)
+      : Number(previousSettings.autoBackupIntervalMinutes) || 1440
+  };
+
+  state.updatingAutoBackup = true;
+  state.settings = {
+    ...previousSettings,
+    ...nextSettings,
+    lastAutoBackupError: ''
+  };
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setAutoBackupSettings(nextSettings);
+  } catch (error) {
+    state.settings = previousSettings;
+    renderSettingsScreen();
+    throw error;
+  } finally {
+    state.updatingAutoBackup = false;
+  }
+
+  renderSettingsScreen();
+}
+
 async function updateCloseWindowAction(closeWindowAction) {
   if (state.updatingCloseAction) {
     return;
@@ -1333,6 +1450,14 @@ async function updateItemVisibility(itemKey, isVisible) {
 }
 
 function bindEvents() {
+  const commitAutoBackupInterval = () => {
+    const intervalMinutes = getAutoBackupIntervalMinutesFromParts(
+      elements.autoBackupIntervalValue.value,
+      elements.autoBackupIntervalUnit.value
+    );
+    updateAutoBackupSettings({ autoBackupIntervalMinutes: intervalMinutes }).catch(() => {});
+  };
+
   elements.rangeTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       if (tab.id === 'settings-button') {
@@ -1385,6 +1510,16 @@ function bindEvents() {
       elements.autoLaunchToggle.disabled = false;
     }
   });
+
+  elements.autoBackupToggle.addEventListener('click', () => {
+    updateAutoBackupSettings({
+      autoBackupEnabled: !Boolean(state.settings?.autoBackupEnabled)
+    }).catch(() => {});
+  });
+
+  elements.autoBackupIntervalValue.addEventListener('change', commitAutoBackupInterval);
+  elements.autoBackupIntervalValue.addEventListener('blur', commitAutoBackupInterval);
+  elements.autoBackupIntervalUnit.addEventListener('change', commitAutoBackupInterval);
 
   elements.closeActionButtons.forEach((button) => {
     button.addEventListener('click', () => {

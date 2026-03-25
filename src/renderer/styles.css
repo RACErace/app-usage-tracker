@@ -500,6 +500,10 @@ canvas {
   font-size: 13px;
 }
 
+.bridge-hint {
+  margin: 12px 0 0;
+}
+
 .settings-section-header {
   align-items: flex-start;
 }
@@ -621,6 +625,61 @@ canvas {
 .setting-name {
   font-size: 18px;
   font-weight: 700;
+}
+
+.settings-inline-form {
+  margin-top: 18px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-field-label {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-frequency-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-number-input,
+.settings-select {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  min-height: 46px;
+  padding: 0 14px;
+  font: inherit;
+  outline: none;
+}
+
+.settings-number-input {
+  width: 110px;
+}
+
+.settings-select {
+  min-width: 96px;
+  cursor: pointer;
+}
+
+.settings-number-input:focus,
+.settings-select:focus {
+  border-color: rgba(83, 204, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(83, 204, 255, 0.12);
+}
+
+.settings-number-input:disabled,
+.settings-select:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .toggle-switch {

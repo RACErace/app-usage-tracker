@@ -1,6 +1,11 @@
 const fs = require('fs/promises');
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
+const {
+  DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
+  normalizeAutoBackupIntervalMinutes,
+  calculateNextAutoBackupAt
+} = require('./auto-backup');
 const { buildBackupPayload, parseBackupPayload, getDefaultBackupFileName } = require('./backup');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
@@ -10,12 +15,17 @@ const SHOW_WINDOW_ARG = '--show-window';
 const CLOSE_ACTION_EXIT = 'exit';
 const CLOSE_ACTION_TRAY = 'tray';
 const CLOSE_ACTION_ASK = 'ask';
+const AUTO_BACKUP_DIR_NAME = 'backups';
+const AUTO_BACKUP_MAX_TIMER_DELAY_MS = 2147483647;
 const BACKUP_FILE_FILTERS = [
   { name: 'JSON 文件', extensions: ['json'] }
 ];
 const DEFAULT_APP_SETTINGS = Object.freeze({
   hiddenItemKeys: [],
-  closeWindowAction: CLOSE_ACTION_TRAY
+  closeWindowAction: CLOSE_ACTION_TRAY,
+  autoBackupEnabled: false,
+  autoBackupIntervalMinutes: DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
+  lastAutoBackupAt: ''
 });
 
 let mainWindow;
@@ -28,6 +38,9 @@ let shouldLaunchHidden = false;
 let appSettings = { ...DEFAULT_APP_SETTINGS };
 let isHandlingCloseAction = false;
 let isShuttingDown = false;
+let autoBackupTimer = null;
+let autoBackupInFlight = null;
+let lastAutoBackupError = '';
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -88,15 +101,44 @@ function normalizeImportedBackupSettings(value) {
   return {
     autoLaunchEnabled: Boolean(value?.autoLaunchEnabled),
     hiddenItemKeys: normalizeHiddenItemKeys(value?.hiddenItemKeys),
-    closeWindowAction: normalizeCloseWindowAction(value?.closeWindowAction)
+    closeWindowAction: normalizeCloseWindowAction(value?.closeWindowAction),
+    autoBackupEnabled: Boolean(value?.autoBackupEnabled),
+    autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(value?.autoBackupIntervalMinutes),
+    lastAutoBackupAt: typeof value?.lastAutoBackupAt === 'string' ? value.lastAutoBackupAt.trim() : ''
+  };
+}
+
+function getAutoBackupDirectory() {
+  return path.join(app.getPath('userData'), AUTO_BACKUP_DIR_NAME);
+}
+
+function getNextAutoBackupAt() {
+  const nextTimestamp = calculateNextAutoBackupAt({
+    enabled: appSettings.autoBackupEnabled,
+    intervalMinutes: appSettings.autoBackupIntervalMinutes,
+    lastAutoBackupAt: appSettings.lastAutoBackupAt
+  });
+
+  return nextTimestamp ? new Date(nextTimestamp).toISOString() : '';
+}
+
+function getStoredSettingsPayload() {
+  return {
+    autoLaunchEnabled,
+    hiddenItemKeys: [...appSettings.hiddenItemKeys],
+    closeWindowAction: appSettings.closeWindowAction,
+    autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
+    autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
+    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
   };
 }
 
 function getSettingsPayload() {
   return {
-    autoLaunchEnabled,
-    hiddenItemKeys: [...appSettings.hiddenItemKeys],
-    closeWindowAction: appSettings.closeWindowAction
+    ...getStoredSettingsPayload(),
+    autoBackupDirectory: getAutoBackupDirectory(),
+    nextAutoBackupAt: getNextAutoBackupAt(),
+    lastAutoBackupError
   };
 }
 
@@ -106,7 +148,10 @@ async function loadAppSettings() {
     const parsed = JSON.parse(rawSettings);
     appSettings = {
       hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
-      closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction)
+      closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction),
+      autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
+      autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
+      lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : ''
     };
   } catch {
     appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -143,6 +188,114 @@ async function writeCloseWindowAction(closeWindowAction) {
   notifySettingsChanged();
 }
 
+function clearAutoBackupTimer() {
+  if (autoBackupTimer) {
+    clearTimeout(autoBackupTimer);
+    autoBackupTimer = null;
+  }
+}
+
+async function writeBackupFile(targetFilePath) {
+  if (!usageTracker) {
+    throw new Error('使用统计尚未初始化完成。');
+  }
+
+  await usageTracker.flush();
+  const exportedAt = new Date().toISOString();
+  const backupPayload = buildBackupPayload({
+    usageData: usageTracker.data,
+    settings: getStoredSettingsPayload(),
+    appVersion: app.getVersion(),
+    exportedAt
+  });
+
+  await fs.mkdir(path.dirname(targetFilePath), { recursive: true });
+  await fs.writeFile(targetFilePath, JSON.stringify(backupPayload, null, 2), 'utf8');
+  return {
+    filePath: targetFilePath,
+    exportedAt
+  };
+}
+
+function scheduleAutoBackup() {
+  clearAutoBackupTimer();
+
+  if (!appSettings.autoBackupEnabled) {
+    notifySettingsChanged();
+    return;
+  }
+
+  const nextAutoBackupAt = calculateNextAutoBackupAt({
+    enabled: true,
+    intervalMinutes: appSettings.autoBackupIntervalMinutes,
+    lastAutoBackupAt: appSettings.lastAutoBackupAt
+  });
+  const delayMs = Math.max(nextAutoBackupAt - Date.now(), 0);
+  const timerDelayMs = Math.min(delayMs, AUTO_BACKUP_MAX_TIMER_DELAY_MS);
+
+  autoBackupTimer = setTimeout(() => {
+    const refreshedNextAutoBackupAt = calculateNextAutoBackupAt({
+      enabled: true,
+      intervalMinutes: appSettings.autoBackupIntervalMinutes,
+      lastAutoBackupAt: appSettings.lastAutoBackupAt
+    });
+
+    if (refreshedNextAutoBackupAt > Date.now()) {
+      scheduleAutoBackup();
+      return;
+    }
+
+    runAutomaticBackup().catch((error) => {
+      console.error('自动备份失败:', error);
+    });
+  }, timerDelayMs);
+
+  notifySettingsChanged();
+}
+
+async function runAutomaticBackup() {
+  if (!appSettings.autoBackupEnabled) {
+    return null;
+  }
+
+  if (autoBackupInFlight) {
+    return autoBackupInFlight;
+  }
+
+  const execute = (async () => {
+    try {
+      const targetFilePath = path.join(
+        getAutoBackupDirectory(),
+        getDefaultBackupFileName()
+      );
+      const result = await writeBackupFile(targetFilePath);
+      appSettings.lastAutoBackupAt = result.exportedAt;
+      lastAutoBackupError = '';
+      await saveAppSettings();
+      notifySettingsChanged();
+      return result;
+    } catch (error) {
+      lastAutoBackupError = error instanceof Error ? error.message : String(error || '自动备份失败');
+      notifySettingsChanged();
+      throw error;
+    } finally {
+      autoBackupInFlight = null;
+      scheduleAutoBackup();
+    }
+  })();
+
+  autoBackupInFlight = execute;
+  return execute;
+}
+
+async function writeAutoBackupSettings({ autoBackupEnabled, autoBackupIntervalMinutes }) {
+  appSettings.autoBackupEnabled = Boolean(autoBackupEnabled);
+  appSettings.autoBackupIntervalMinutes = normalizeAutoBackupIntervalMinutes(autoBackupIntervalMinutes);
+  lastAutoBackupError = '';
+  await saveAppSettings();
+  scheduleAutoBackup();
+}
+
 function getBackupDialogBasePath() {
   const candidateKeys = ['documents', 'desktop', 'home'];
   for (const candidateKey of candidateKeys) {
@@ -160,21 +313,9 @@ function getBackupDialogBasePath() {
 }
 
 async function exportBackupFile() {
-  if (!usageTracker) {
-    throw new Error('使用统计尚未初始化完成。');
-  }
-
-  await usageTracker.flush();
-  const exportedAt = new Date().toISOString();
-  const backupPayload = buildBackupPayload({
-    usageData: usageTracker.data,
-    settings: getSettingsPayload(),
-    appVersion: app.getVersion(),
-    exportedAt
-  });
   const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
     title: '导出备份',
-    defaultPath: path.join(getBackupDialogBasePath(), getDefaultBackupFileName(new Date(exportedAt))),
+    defaultPath: path.join(getBackupDialogBasePath(), getDefaultBackupFileName()),
     filters: BACKUP_FILE_FILTERS
   });
 
@@ -182,11 +323,11 @@ async function exportBackupFile() {
     return { canceled: true };
   }
 
-  await fs.writeFile(filePath, JSON.stringify(backupPayload, null, 2), 'utf8');
+  const result = await writeBackupFile(filePath);
   return {
     canceled: false,
-    filePath,
-    exportedAt
+    filePath: result.filePath,
+    exportedAt: result.exportedAt
   };
 }
 
@@ -194,10 +335,16 @@ async function applyImportedBackupSettings(restoredSettings) {
   const normalized = normalizeImportedBackupSettings(restoredSettings);
   appSettings = {
     hiddenItemKeys: normalized.hiddenItemKeys,
-    closeWindowAction: normalized.closeWindowAction
+    closeWindowAction: normalized.closeWindowAction,
+    autoBackupEnabled: normalized.autoBackupEnabled,
+    autoBackupIntervalMinutes: normalized.autoBackupIntervalMinutes,
+    lastAutoBackupAt: normalized.lastAutoBackupAt
   };
+  lastAutoBackupError = '';
   await saveAppSettings();
   writeAutoLaunchState(normalized.autoLaunchEnabled);
+  scheduleAutoBackup();
+  notifySettingsChanged();
 }
 
 function buildRestoreConfirmationDetail(parsedBackup) {
@@ -329,6 +476,7 @@ async function shutdownApp({ relaunch = false } = {}) {
 
   isShuttingDown = true;
   isQuitting = true;
+  clearAutoBackupTimer();
 
   try {
     if (usageTracker) {
@@ -525,6 +673,7 @@ async function bootstrap() {
   });
 
   await usageTracker.init();
+  scheduleAutoBackup();
   createTray();
   createWindow();
 }
@@ -581,6 +730,11 @@ ipcMain.handle('settings:set-hidden-item-keys', async (_event, hiddenItemKeys) =
 
 ipcMain.handle('settings:set-close-window-action', async (_event, closeWindowAction) => {
   await writeCloseWindowAction(closeWindowAction);
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-auto-backup', async (_event, nextSettings) => {
+  await writeAutoBackupSettings(nextSettings || {});
   return getSettingsPayload();
 });
 
