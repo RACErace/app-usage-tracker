@@ -19,12 +19,12 @@ test('buildBackupPayload wraps usage data and settings into a versioned backup f
       hiddenItemKeys: ['music:qqmusic'],
       closeWindowAction: 'tray'
     },
-    appVersion: '1.3.0',
+    appVersion: '1.4.0',
     exportedAt: '2026-03-25T06:30:00.000Z'
   });
 
   assert.equal(payload.backupVersion, BACKUP_VERSION);
-  assert.equal(payload.appVersion, '1.3.0');
+  assert.equal(payload.appVersion, '1.4.0');
   assert.equal(payload.exportedAt, '2026-03-25T06:30:00.000Z');
   assert.deepEqual(payload.settings, {
     autoLaunchEnabled: true,
