@@ -1,7 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
-const { execFile } = require('child_process');
+const { execFile, fork } = require('child_process');
 const { promisify } = require('util');
 const { getDomain } = require('tldts');
 
@@ -17,13 +17,18 @@ const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
 const ALLOWED_BRIDGE_ORIGIN_PREFIXES = ['chrome-extension://', 'moz-extension://'];
 const SMTC_COMMAND_TIMEOUT_MS = 4500;
 const SMTC_MAX_BUFFER_BYTES = 256 * 1024;
+const WASAPI_COMMAND_TIMEOUT_MS = 6500;
+const WASAPI_MAX_BUFFER_BYTES = 256 * 1024;
+const MEDIA_HELPER_RESTART_DELAY_MS = 1500;
 const SMTC_PLAYBACK_STATUS_PLAYING = 'Playing';
 const SMTC_PLAYBACK_TYPE_MUSIC = 'Music';
+const AUDIO_SESSION_STATE_ACTIVE = 'Active';
 let activeWinLoader = null;
 const execFileAsync = promisify(execFile);
 const WINDOWS_POWERSHELL_PATH = process.platform === 'win32'
   ? path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : '';
+const MEDIA_SESSION_HELPER_PATH = path.join(__dirname, 'media-session-helper.js');
 
 const SMTC_SNAPSHOT_COMMAND = Buffer.from(`
 $ErrorActionPreference = 'Stop'
@@ -67,7 +72,279 @@ try {
     }
   }
 
-  ConvertTo-Json -Compress -Depth 4 -InputObject @($result)
+  if ($result.Count -eq 0) {
+    '[]'
+  } else {
+    ConvertTo-Json -Compress -Depth 4 -InputObject @($result)
+  }
+} catch {
+  '[]'
+}
+`, 'utf16le').toString('base64');
+
+const WASAPI_SNAPSHOT_COMMAND = Buffer.from(`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$source = @"
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+public static class WasapiSessionProbe
+{
+    public static List<AudioSessionSnapshot> Collect()
+    {
+        var result = new List<AudioSessionSnapshot>();
+        IMMDeviceEnumerator enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+        IMMDevice device;
+        int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device);
+        if (hr != 0 || device == null)
+        {
+            return result;
+        }
+
+        string endpointId = string.Empty;
+        try { device.GetId(out endpointId); } catch { }
+
+        object managerObject;
+        var managerGuid = typeof(IAudioSessionManager2).GUID;
+        if (device.Activate(ref managerGuid, CLSCTX.ALL, IntPtr.Zero, out managerObject) != 0 || managerObject == null)
+        {
+            return result;
+        }
+
+        var manager = (IAudioSessionManager2)managerObject;
+        IAudioSessionEnumerator sessionEnumerator;
+        if (manager.GetSessionEnumerator(out sessionEnumerator) != 0 || sessionEnumerator == null)
+        {
+            return result;
+        }
+
+        int sessionCount;
+        sessionEnumerator.GetCount(out sessionCount);
+        for (int sessionIndex = 0; sessionIndex < sessionCount; sessionIndex++)
+        {
+            IAudioSessionControl sessionControl;
+            if (sessionEnumerator.GetSession(sessionIndex, out sessionControl) != 0 || sessionControl == null)
+            {
+                continue;
+            }
+
+            AudioSessionState state;
+            sessionControl.GetState(out state);
+
+            string displayName = string.Empty;
+            string iconPath = string.Empty;
+            try { sessionControl.GetDisplayName(out displayName); } catch { }
+            try { sessionControl.GetIconPath(out iconPath); } catch { }
+
+            uint processId = 0;
+            string sessionIdentifier = string.Empty;
+            string sessionInstanceIdentifier = string.Empty;
+            var sessionControl2 = sessionControl as IAudioSessionControl2;
+            if (sessionControl2 != null)
+            {
+                try { sessionControl2.GetProcessId(out processId); } catch { }
+                try { sessionControl2.GetSessionIdentifier(out sessionIdentifier); } catch { }
+                try { sessionControl2.GetSessionInstanceIdentifier(out sessionInstanceIdentifier); } catch { }
+            }
+
+            float peakValue = 0;
+            var meter = sessionControl as IAudioMeterInformation;
+            if (meter != null)
+            {
+                try { meter.GetPeakValue(out peakValue); } catch { }
+            }
+
+            bool isMuted = false;
+            var volume = sessionControl as ISimpleAudioVolume;
+            if (volume != null)
+            {
+                try { volume.GetMute(out isMuted); } catch { }
+            }
+
+            string processName = string.Empty;
+            string executablePath = string.Empty;
+            if (processId > 0)
+            {
+                try
+                {
+                    var process = Process.GetProcessById((int)processId);
+                    processName = process.ProcessName ?? string.Empty;
+                    try { executablePath = process.MainModule != null ? (process.MainModule.FileName ?? string.Empty) : string.Empty; } catch { }
+                }
+                catch { }
+            }
+
+            result.Add(new AudioSessionSnapshot
+            {
+                EndpointId = endpointId ?? string.Empty,
+                State = state.ToString(),
+                PeakValue = peakValue,
+                IsMuted = isMuted,
+                ProcessId = processId,
+                ProcessName = processName ?? string.Empty,
+                ExecutablePath = executablePath ?? string.Empty,
+                SessionIdentifier = sessionIdentifier ?? string.Empty,
+                SessionInstanceIdentifier = sessionInstanceIdentifier ?? string.Empty,
+                DisplayName = displayName ?? string.Empty,
+                IconPath = iconPath ?? string.Empty
+            });
+        }
+
+        return result;
+    }
+}
+
+public class AudioSessionSnapshot
+{
+    public string EndpointId { get; set; }
+    public string State { get; set; }
+    public float PeakValue { get; set; }
+    public bool IsMuted { get; set; }
+    public uint ProcessId { get; set; }
+    public string ProcessName { get; set; }
+    public string ExecutablePath { get; set; }
+    public string SessionIdentifier { get; set; }
+    public string SessionInstanceIdentifier { get; set; }
+    public string DisplayName { get; set; }
+    public string IconPath { get; set; }
+}
+
+public enum EDataFlow
+{
+    eRender,
+    eCapture,
+    eAll,
+    EDataFlow_enum_count
+}
+
+public enum ERole
+{
+    eConsole,
+    eMultimedia,
+    eCommunications,
+    ERole_enum_count
+}
+
+public enum AudioSessionState
+{
+    Inactive = 0,
+    Active = 1,
+    Expired = 2
+}
+
+public enum CLSCTX : uint
+{
+    INPROC_SERVER = 0x1,
+    INPROC_HANDLER = 0x2,
+    LOCAL_SERVER = 0x4,
+    REMOTE_SERVER = 0x10,
+    ALL = INPROC_SERVER | INPROC_HANDLER | LOCAL_SERVER | REMOTE_SERVER
+}
+
+[ComImport]
+[Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+public class MMDeviceEnumeratorComObject
+{
+}
+
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDeviceEnumerator
+{
+    [PreserveSig] int EnumAudioEndpoints(EDataFlow dataFlow, uint dwStateMask, out object ppDevices);
+    [PreserveSig] int GetDefaultAudioEndpoint(EDataFlow dataFlow, ERole role, out IMMDevice ppEndpoint);
+    [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string pwstrId, out IMMDevice ppDevice);
+    [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr pClient);
+    [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr pClient);
+}
+
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDevice
+{
+    [PreserveSig] int Activate(ref Guid iid, CLSCTX dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.Interface)] out object ppInterface);
+    [PreserveSig] int OpenPropertyStore(int stgmAccess, out IntPtr ppProperties);
+    [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string ppstrId);
+    [PreserveSig] int GetState(out uint pdwState);
+}
+
+[Guid("BFA971F1-4D5E-40BB-935E-967039BFBEE4"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionManager
+{
+    [PreserveSig] int GetAudioSessionControl(ref Guid AudioSessionGuid, uint StreamFlags, out IAudioSessionControl SessionControl);
+    [PreserveSig] int GetSimpleAudioVolume(ref Guid AudioSessionGuid, uint StreamFlags, out ISimpleAudioVolume AudioVolume);
+}
+
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionManager2 : IAudioSessionManager
+{
+    [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
+    [PreserveSig] int RegisterSessionNotification(IntPtr SessionNotification);
+    [PreserveSig] int UnregisterSessionNotification(IntPtr SessionNotification);
+    [PreserveSig] int RegisterDuckNotification([MarshalAs(UnmanagedType.LPWStr)] string sessionID, IntPtr duckNotification);
+    [PreserveSig] int UnregisterDuckNotification(IntPtr duckNotification);
+}
+
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionEnumerator
+{
+    [PreserveSig] int GetCount(out int SessionCount);
+    [PreserveSig] int GetSession(int SessionCount, out IAudioSessionControl Session);
+}
+
+[Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionControl
+{
+    [PreserveSig] int GetState(out AudioSessionState pRetVal);
+    [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
+    [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, ref Guid EventContext);
+    [PreserveSig] int GetGroupingParam(out Guid pRetVal);
+    [PreserveSig] int SetGroupingParam(ref Guid Override, ref Guid EventContext);
+    [PreserveSig] int RegisterAudioSessionNotification(IntPtr NewNotifications);
+    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr NewNotifications);
+}
+
+[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionControl2 : IAudioSessionControl
+{
+    [PreserveSig] int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    [PreserveSig] int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    [PreserveSig] int GetProcessId(out uint pRetVal);
+    [PreserveSig] int IsSystemSoundsSession();
+    [PreserveSig] int SetDuckingPreference([MarshalAs(UnmanagedType.Bool)] bool optOut);
+}
+
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface ISimpleAudioVolume
+{
+    [PreserveSig] int SetMasterVolume(float fLevel, ref Guid EventContext);
+    [PreserveSig] int GetMasterVolume(out float pfLevel);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid EventContext);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+}
+
+[Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioMeterInformation
+{
+    [PreserveSig] int GetPeakValue(out float pfPeak);
+    [PreserveSig] int GetMeteringChannelCount(out int pnChannelCount);
+    [PreserveSig] int GetChannelsPeakValues(int u32ChannelCount, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] float[] afPeakValues);
+    [PreserveSig] int QueryHardwareSupport(out int pdwHardwareSupportMask);
+}
+"@
+
+try {
+  Add-Type -TypeDefinition $source -Language CSharp
+  $result = [WasapiSessionProbe]::Collect()
+  if ($result.Count -eq 0) {
+    '[]'
+  } else {
+    ConvertTo-Json -Compress -Depth 4 -InputObject @($result)
+  }
 } catch {
   '[]'
 }
@@ -360,6 +637,8 @@ function findMusicAppProfile(entry) {
   const tokens = new Set([
     normalizeComparableToken(entry.appName),
     normalizeComparableToken(entry.label),
+    normalizeComparableToken(entry.processName),
+    normalizeComparableToken(entry.displayName),
     getExecutableToken(entry.executablePath),
     getExecutableToken(entry.sourceAppUserModelId)
   ].filter(Boolean));
@@ -422,6 +701,17 @@ function cloneItem(item) {
     ...item,
     hourly: [...item.hourly]
   };
+}
+
+function clonePlaybackCandidate(item) {
+  return {
+    ...item,
+    providers: Array.isArray(item?.providers) ? [...item.providers] : []
+  };
+}
+
+function clonePlaybackCandidateList(items) {
+  return (Array.isArray(items) ? items : []).map((item) => clonePlaybackCandidate(item));
 }
 
 async function getActiveWindow() {
@@ -505,7 +795,15 @@ function cloneStoredItem(item) {
     mediaArtist: sanitizeText(item.mediaArtist),
     mediaAlbumTitle: sanitizeText(item.mediaAlbumTitle),
     playbackStatus: sanitizeText(item.playbackStatus),
-    playbackType: sanitizeText(item.playbackType)
+    playbackType: sanitizeText(item.playbackType),
+    processId: Number(item.processId) || 0,
+    processName: sanitizeText(item.processName),
+    audioSessionState: sanitizeText(item.audioSessionState),
+    audioPeakValue: Number(item.audioPeakValue) || 0,
+    audioIsMuted: Boolean(item.audioIsMuted),
+    audioEndpointId: sanitizeText(item.audioEndpointId),
+    audioSessionIdentifier: sanitizeText(item.audioSessionIdentifier),
+    audioSessionInstanceIdentifier: sanitizeText(item.audioSessionInstanceIdentifier)
   };
 }
 
@@ -580,6 +878,14 @@ function mergeStoredItems(target, source) {
     target.mediaAlbumTitle = source.mediaAlbumTitle || target.mediaAlbumTitle;
     target.playbackStatus = source.playbackStatus || target.playbackStatus;
     target.playbackType = source.playbackType || target.playbackType;
+    target.processId = Number(source.processId) || target.processId || 0;
+    target.processName = source.processName || target.processName;
+    target.audioSessionState = source.audioSessionState || target.audioSessionState;
+    target.audioPeakValue = Math.max(Number(source.audioPeakValue) || 0, Number(target.audioPeakValue) || 0);
+    target.audioIsMuted = typeof source.audioIsMuted === 'boolean' ? source.audioIsMuted : target.audioIsMuted;
+    target.audioEndpointId = source.audioEndpointId || target.audioEndpointId;
+    target.audioSessionIdentifier = source.audioSessionIdentifier || target.audioSessionIdentifier;
+    target.audioSessionInstanceIdentifier = source.audioSessionInstanceIdentifier || target.audioSessionInstanceIdentifier;
     target.lastSeenAt = sourceSeenAt;
   }
 }
@@ -614,6 +920,41 @@ function parseSmtcSnapshotOutput(stdout) {
   }
 }
 
+function normalizeWasapiSession(item) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  return {
+    endpointId: sanitizeText(item.endpointId),
+    state: sanitizeText(item.state),
+    peakValue: Number(item.peakValue) || 0,
+    isMuted: Boolean(item.isMuted),
+    processId: Number(item.processId) || 0,
+    processName: sanitizeText(item.processName),
+    executablePath: sanitizeText(item.executablePath),
+    sessionIdentifier: sanitizeText(item.sessionIdentifier),
+    sessionInstanceIdentifier: sanitizeText(item.sessionInstanceIdentifier),
+    displayName: sanitizeText(item.displayName),
+    iconPath: sanitizeText(item.iconPath)
+  };
+}
+
+function parseWasapiSnapshotOutput(stdout) {
+  const rawOutput = sanitizeText(stdout);
+  if (!rawOutput) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawOutput);
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.map((item) => normalizeWasapiSession(item)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function isTrackableMusicSession(session) {
   if (!session) {
     return false;
@@ -634,12 +975,282 @@ function isTrackableMusicSession(session) {
   return !isBrowserSourceAppUserModelId(session.sourceAppUserModelId);
 }
 
-class SmtcSessionBridge {
-  constructor() {
+function isLikelyMusicApp(entry) {
+  const tokens = [
+    normalizeComparableToken(entry?.appName),
+    normalizeComparableToken(entry?.label),
+    normalizeComparableToken(entry?.displayName),
+    normalizeComparableToken(entry?.processName),
+    getExecutableToken(entry?.executablePath),
+    getSourceAppUserModelIdToken(entry?.sourceAppUserModelId)
+  ].filter(Boolean);
+
+  return tokens.some((token) => (
+    token.includes('music')
+    || token.includes('spotify')
+    || token.includes('foobar')
+    || token.includes('aimp')
+    || token.includes('cloudmusic')
+    || token.includes('qqmusic')
+    || token.includes('kugou')
+    || token.includes('kuwo')
+    || token.includes('musicbee')
+    || token.includes('applemusic')
+    || token.includes('音乐')
+    || token.includes('网易云')
+    || token.includes('酷狗')
+    || token.includes('酷我')
+  ));
+}
+
+function isTrackableWasapiSession(session) {
+  if (!session) {
+    return false;
+  }
+
+  if (sanitizeText(session.state) !== AUDIO_SESSION_STATE_ACTIVE) {
+    return false;
+  }
+
+  if (!Number(session.processId)) {
+    return false;
+  }
+
+  if (findMusicAppProfile(session)) {
+    return true;
+  }
+
+  if (isBrowserSourceAppUserModelId(session.processName)) {
+    return false;
+  }
+
+  return isLikelyMusicApp(session);
+}
+
+function buildPlaybackIdentity(entry) {
+  const profile = findMusicAppProfile(entry);
+  if (profile) {
+    return {
+      key: `music:${profile.id}`,
+      label: profile.displayLabel,
+      appName: profile.displayLabel
+    };
+  }
+
+  const identitySource = sanitizeText(
+    entry.executablePath
+      || entry.sourceAppUserModelId
+      || entry.processName
+      || entry.displayName
+      || entry.appName
+      || entry.label
+  );
+
+  if (!identitySource) {
+    return null;
+  }
+
+  const label = sanitizeText(
+    entry.displayName
+      || entry.processName
+      || entry.appName
+      || entry.label
+      || humanizeMusicAppName(identitySource),
+    '音乐播放'
+  );
+
+  return {
+    key: `music:${hashString(identitySource.toLowerCase())}`,
+    label,
+    appName: label
+  };
+}
+
+function buildPlaybackCandidateFromSmtc(session) {
+  if (!isTrackableMusicSession(session)) {
+    return null;
+  }
+
+  const identity = buildPlaybackIdentity({
+    sourceAppUserModelId: session.sourceAppUserModelId,
+    appName: humanizeMusicAppName(session.sourceAppUserModelId)
+  });
+  if (!identity) {
+    return null;
+  }
+
+  return {
+    ...identity,
+    provider: 'smtc',
+    subtitle: buildMediaSubtitle({
+      title: session.title,
+      artist: session.artist,
+      fallback: identity.label
+    }),
+    executablePath: '',
+    sourceAppUserModelId: sanitizeText(session.sourceAppUserModelId),
+    mediaTitle: sanitizeText(session.title),
+    mediaArtist: sanitizeText(session.artist),
+    mediaAlbumTitle: sanitizeText(session.albumTitle),
+    playbackStatus: sanitizeText(session.playbackStatus),
+    playbackType: sanitizeText(session.playbackType),
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: ''
+  };
+}
+
+function buildPlaybackCandidateFromWasapi(session) {
+  if (!isTrackableWasapiSession(session)) {
+    return null;
+  }
+
+  const identity = buildPlaybackIdentity({
+    appName: session.displayName || session.processName,
+    label: session.displayName,
+    displayName: session.displayName,
+    processName: session.processName,
+    executablePath: session.executablePath,
+    sourceAppUserModelId: session.processName
+  });
+  if (!identity) {
+    return null;
+  }
+
+  const fallbackSubtitle = sanitizeText(session.displayName || session.processName || identity.label);
+  return {
+    ...identity,
+    provider: 'wasapi',
+    subtitle: fallbackSubtitle,
+    executablePath: sanitizeText(session.executablePath),
+    sourceAppUserModelId: sanitizeText(session.processName),
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: Number(session.processId) || 0,
+    processName: sanitizeText(session.processName),
+    audioSessionState: sanitizeText(session.state),
+    audioPeakValue: Number(session.peakValue) || 0,
+    audioIsMuted: Boolean(session.isMuted),
+    audioEndpointId: sanitizeText(session.endpointId),
+    audioSessionIdentifier: sanitizeText(session.sessionIdentifier),
+    audioSessionInstanceIdentifier: sanitizeText(session.sessionInstanceIdentifier)
+  };
+}
+
+function mergePlaybackCandidate(target, source) {
+  const providers = new Set([...(target.providers || []), ...(source.providers || []), source.provider].filter(Boolean));
+  const next = {
+    ...target,
+    ...source,
+    providers: [...providers].sort()
+  };
+
+  next.key = target.key || source.key;
+  next.label = target.label || source.label;
+  next.appName = target.appName || source.appName || next.label;
+  next.subtitle = target.subtitle || source.subtitle || next.label;
+  next.sourceAppUserModelId = target.sourceAppUserModelId || source.sourceAppUserModelId || '';
+  next.mediaTitle = target.mediaTitle || source.mediaTitle || '';
+  next.mediaArtist = target.mediaArtist || source.mediaArtist || '';
+  next.mediaAlbumTitle = target.mediaAlbumTitle || source.mediaAlbumTitle || '';
+  next.playbackStatus = target.playbackStatus || source.playbackStatus || '';
+  next.playbackType = target.playbackType || source.playbackType || '';
+  next.executablePath = target.executablePath || source.executablePath || '';
+  next.processId = target.processId || source.processId || 0;
+  next.processName = target.processName || source.processName || '';
+  next.audioSessionState = target.audioSessionState || source.audioSessionState || '';
+  next.audioPeakValue = Math.max(Number(target.audioPeakValue) || 0, Number(source.audioPeakValue) || 0);
+  next.audioIsMuted = typeof target.audioIsMuted === 'boolean'
+    ? target.audioIsMuted
+    : Boolean(source.audioIsMuted);
+  next.audioEndpointId = target.audioEndpointId || source.audioEndpointId || '';
+  next.audioSessionIdentifier = target.audioSessionIdentifier || source.audioSessionIdentifier || '';
+  next.audioSessionInstanceIdentifier = target.audioSessionInstanceIdentifier || source.audioSessionInstanceIdentifier || '';
+
+  if (source.provider === 'smtc') {
+    next.sourceAppUserModelId = source.sourceAppUserModelId || target.sourceAppUserModelId;
+    next.mediaTitle = source.mediaTitle || target.mediaTitle;
+    next.mediaArtist = source.mediaArtist || target.mediaArtist;
+    next.mediaAlbumTitle = source.mediaAlbumTitle || target.mediaAlbumTitle;
+    next.playbackStatus = source.playbackStatus || target.playbackStatus;
+    next.playbackType = source.playbackType || target.playbackType;
+    next.subtitle = source.subtitle || next.subtitle;
+  }
+
+  if (source.provider === 'wasapi') {
+    next.executablePath = source.executablePath || target.executablePath;
+    next.processId = source.processId || target.processId || 0;
+    next.processName = source.processName || target.processName;
+    next.audioSessionState = source.audioSessionState || target.audioSessionState;
+    next.audioPeakValue = Math.max(Number(target.audioPeakValue) || 0, Number(source.audioPeakValue) || 0);
+    next.audioIsMuted = (target.providers || []).includes('wasapi')
+      ? Boolean(target.audioIsMuted && source.audioIsMuted)
+      : Boolean(source.audioIsMuted);
+    next.audioEndpointId = source.audioEndpointId || target.audioEndpointId;
+    next.audioSessionIdentifier = source.audioSessionIdentifier || target.audioSessionIdentifier;
+    next.audioSessionInstanceIdentifier = source.audioSessionInstanceIdentifier || target.audioSessionInstanceIdentifier;
+  }
+
+  next.trackingSource = next.providers.length > 1 ? 'hybrid' : (next.providers[0] || '');
+  next.trackingMode = 'playback';
+  return next;
+}
+
+function fusePlaybackCandidates({ smtcSessions, wasapiSessions }) {
+  const candidates = new Map();
+
+  for (const session of smtcSessions || []) {
+    const candidate = buildPlaybackCandidateFromSmtc(session);
+    if (!candidate) {
+      continue;
+    }
+
+    const existing = candidates.get(candidate.key);
+    candidates.set(candidate.key, existing ? mergePlaybackCandidate(existing, candidate) : {
+      ...candidate,
+      providers: [candidate.provider],
+      trackingMode: 'playback',
+      trackingSource: candidate.provider,
+      audioIsMuted: false
+    });
+  }
+
+  for (const session of wasapiSessions || []) {
+    const candidate = buildPlaybackCandidateFromWasapi(session);
+    if (!candidate) {
+      continue;
+    }
+
+    const existing = candidates.get(candidate.key);
+    candidates.set(candidate.key, existing ? mergePlaybackCandidate(existing, candidate) : {
+      ...candidate,
+      providers: [candidate.provider],
+      trackingMode: 'playback',
+      trackingSource: candidate.provider
+    });
+  }
+
+  return [...candidates.values()];
+}
+
+class PowerShellMediaSessionBridge {
+  constructor({ command, parseSnapshot, timeout, maxBuffer }) {
     this.sessions = [];
     this.pendingPoll = null;
     this.disabled = process.platform !== 'win32';
     this.lastSuccessAt = 0;
+    this.command = command;
+    this.parseSnapshot = parseSnapshot;
+    this.timeout = timeout;
+    this.maxBuffer = maxBuffer;
   }
 
   getSessions() {
@@ -682,15 +1293,179 @@ class SmtcSessionBridge {
   async fetchSessions() {
     const result = await execFileAsync(
       WINDOWS_POWERSHELL_PATH,
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', SMTC_SNAPSHOT_COMMAND],
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', this.command],
       {
         windowsHide: true,
-        timeout: SMTC_COMMAND_TIMEOUT_MS,
-        maxBuffer: SMTC_MAX_BUFFER_BYTES
+        timeout: this.timeout,
+        maxBuffer: this.maxBuffer
       }
     );
 
-    return parseSmtcSnapshotOutput(result.stdout);
+    return this.parseSnapshot(result.stdout);
+  }
+}
+
+class SmtcSessionBridge extends PowerShellMediaSessionBridge {
+  constructor() {
+    super({
+      command: SMTC_SNAPSHOT_COMMAND,
+      parseSnapshot: parseSmtcSnapshotOutput,
+      timeout: SMTC_COMMAND_TIMEOUT_MS,
+      maxBuffer: SMTC_MAX_BUFFER_BYTES
+    });
+  }
+}
+
+class WasapiSessionBridge extends PowerShellMediaSessionBridge {
+  constructor() {
+    super({
+      command: WASAPI_SNAPSHOT_COMMAND,
+      parseSnapshot: parseWasapiSnapshotOutput,
+      timeout: WASAPI_COMMAND_TIMEOUT_MS,
+      maxBuffer: WASAPI_MAX_BUFFER_BYTES
+    });
+  }
+}
+
+class PlaybackSessionFusionService {
+  constructor() {
+    this.smtcSessionBridge = new SmtcSessionBridge();
+    this.wasapiSessionBridge = new WasapiSessionBridge();
+  }
+
+  async poll() {
+    const [smtcSessions, wasapiSessions] = await Promise.all([
+      this.smtcSessionBridge.poll(),
+      this.wasapiSessionBridge.poll()
+    ]);
+
+    return fusePlaybackCandidates({ smtcSessions, wasapiSessions });
+  }
+}
+
+function spawnMediaSessionHelper(helperPath) {
+  return fork(helperPath, [], {
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true
+  });
+}
+
+class HelperBackedPlaybackSessionFusionService {
+  constructor({
+    helperPath = MEDIA_SESSION_HELPER_PATH,
+    restartDelayMs = MEDIA_HELPER_RESTART_DELAY_MS,
+    spawnHelper = spawnMediaSessionHelper
+  } = {}) {
+    this.helperPath = helperPath;
+    this.restartDelayMs = restartDelayMs;
+    this.spawnHelper = spawnHelper;
+    this.child = null;
+    this.latestSnapshot = [];
+    this.latestUpdatedAt = 0;
+    this.restartTimer = null;
+    this.disabled = process.platform !== 'win32';
+    this.disposed = false;
+    this.starting = false;
+  }
+
+  start() {
+    if (this.disabled || this.disposed || this.child || this.starting) {
+      return;
+    }
+
+    this.starting = true;
+    try {
+      const child = this.spawnHelper(this.helperPath);
+      this.child = child;
+      child.on('message', (message) => {
+        this.handleHelperMessage(message);
+      });
+      child.once('exit', () => {
+        this.child = null;
+        if (!this.disposed) {
+          this.scheduleRestart();
+        }
+      });
+      child.once('error', () => {
+        if (!this.disposed) {
+          this.scheduleRestart();
+        }
+      });
+    } catch {
+      this.scheduleRestart();
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  handleHelperMessage(message) {
+    if (!message || typeof message !== 'object') {
+      return;
+    }
+
+    if (message.type === 'snapshot') {
+      this.latestSnapshot = clonePlaybackCandidateList(message.snapshot);
+      this.latestUpdatedAt = Number(message.updatedAt) || Date.now();
+    }
+  }
+
+  scheduleRestart() {
+    if (this.disabled || this.disposed || this.restartTimer) {
+      return;
+    }
+
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      this.start();
+    }, this.restartDelayMs);
+  }
+
+  async poll() {
+    this.start();
+    return clonePlaybackCandidateList(this.latestSnapshot);
+  }
+
+  async dispose() {
+    this.disposed = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
+
+    const child = this.child;
+    this.child = null;
+    if (!child) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      let finished = false;
+      const finalize = () => {
+        if (finished) {
+          return;
+        }
+
+        finished = true;
+        resolve();
+      };
+
+      child.once('exit', finalize);
+      try {
+        child.send({ type: 'shutdown' });
+      } catch {
+        finalize();
+        return;
+      }
+
+      setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          // ignore kill failures
+        }
+        finalize();
+      }, 800);
+    });
   }
 }
 
@@ -850,7 +1625,7 @@ class UsageTracker {
     this.saveTimer = null;
     this.httpServer = null;
     this.browserEvents = new BrowserEventCache();
-    this.smtcSessionBridge = new SmtcSessionBridge();
+    this.playbackSessionFusionService = new HelperBackedPlaybackSessionFusionService();
     this.entryHints = new Map();
     this.serializedDayCache = new Map();
     this.sortedDayKeysCache = [];
@@ -860,6 +1635,7 @@ class UsageTracker {
   async init() {
     await this.load();
     await this.startBrowserBridge();
+    this.playbackSessionFusionService.start();
     await this.pollActiveWindow();
     this.timer = setInterval(() => {
       this.pollActiveWindow().catch(() => {});
@@ -877,6 +1653,10 @@ class UsageTracker {
     if (this.httpServer) {
       await new Promise((resolve) => this.httpServer.close(resolve));
       this.httpServer = null;
+    }
+
+    if (this.playbackSessionFusionService && typeof this.playbackSessionFusionService.dispose === 'function') {
+      await this.playbackSessionFusionService.dispose();
     }
 
     await this.save();
@@ -1026,7 +1806,7 @@ class UsageTracker {
 
     const [activeWindow, playbackSessions] = await Promise.all([
       getActiveWindow().catch(() => null),
-      this.smtcSessionBridge.poll()
+      this.playbackSessionFusionService.poll()
     ]);
     const playbackChanged = this.replacePlaybackEntries(playbackSessions, now);
     const normalized = this.normalizeWindow(activeWindow, now);
@@ -1160,38 +1940,17 @@ class UsageTracker {
   replacePlaybackEntries(playbackSessions, now) {
     const previousState = JSON.stringify(
       [...this.currentPlaybackEntries.values()]
-        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || ''])
+        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || '', entry.trackingSource || '', entry.processName || ''])
         .sort((left, right) => left[0].localeCompare(right[0]))
     );
 
     const nextEntries = new Map();
     for (const session of playbackSessions) {
-      const entry = this.createPlaybackEntryFromSession(session, now);
+      const entry = this.createPlaybackEntryFromCandidate(session, now);
       if (!entry) {
         continue;
       }
-
-      const existing = nextEntries.get(entry.key);
-      if (!existing) {
-        nextEntries.set(entry.key, entry);
-        continue;
-      }
-
-      if (!existing.mediaTitle && entry.mediaTitle) {
-        existing.mediaTitle = entry.mediaTitle;
-      }
-      if (!existing.mediaArtist && entry.mediaArtist) {
-        existing.mediaArtist = entry.mediaArtist;
-      }
-      if (!existing.mediaAlbumTitle && entry.mediaAlbumTitle) {
-        existing.mediaAlbumTitle = entry.mediaAlbumTitle;
-      }
-      existing.subtitle = existing.subtitle || entry.subtitle;
-      existing.windowTitle = existing.windowTitle || entry.windowTitle;
-      existing.sourceAppUserModelId = existing.sourceAppUserModelId || entry.sourceAppUserModelId;
-      existing.playbackStatus = entry.playbackStatus || existing.playbackStatus;
-      existing.playbackType = entry.playbackType || existing.playbackType;
-      existing.executablePath = existing.executablePath || entry.executablePath;
+      nextEntries.set(entry.key, entry);
     }
 
     this.currentPlaybackEntries = nextEntries;
@@ -1201,59 +1960,63 @@ class UsageTracker {
 
     const nextState = JSON.stringify(
       [...this.currentPlaybackEntries.values()]
-        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || ''])
+        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || '', entry.trackingSource || '', entry.processName || ''])
         .sort((left, right) => left[0].localeCompare(right[0]))
     );
 
     return previousState !== nextState;
   }
 
-  createPlaybackEntryFromSession(session, now) {
-    if (!isTrackableMusicSession(session)) {
+  createPlaybackEntryFromCandidate(candidate, now) {
+    if (!candidate || !candidate.key) {
       return null;
     }
 
-    const profile = findMusicAppProfile(session);
-    const sourceAppUserModelId = sanitizeText(session.sourceAppUserModelId);
-    const key = profile
-      ? `music:${profile.id}`
-      : `music:${hashString(sourceAppUserModelId.toLowerCase())}`;
-    const entryHint = this.entryHints.get(key) || {};
+    const entryHint = this.entryHints.get(candidate.key) || {};
     const label = sanitizeText(
-      entryHint.label || entryHint.appName || profile?.displayLabel || humanizeMusicAppName(sourceAppUserModelId),
+      entryHint.label || entryHint.appName || candidate.label || candidate.appName,
       '音乐播放'
     );
-    const subtitle = buildMediaSubtitle({
-      title: session.title,
-      artist: session.artist,
-      fallback: label
-    });
+    const subtitle = sanitizeText(candidate.subtitle, label);
 
     return {
-      key,
+      key: candidate.key,
       kind: 'app',
       label,
       subtitle,
-      appName: sanitizeText(entryHint.appName || profile?.displayLabel || label, label),
+      appName: sanitizeText(entryHint.appName || candidate.appName || label, label),
       browserFamily: null,
       pageTitle: '',
       windowTitle: subtitle || label,
       url: '',
       host: '',
       path: '',
-      executablePath: sanitizeText(entryHint.executablePath),
-      color: getColorFromKey(key),
+      executablePath: sanitizeText(candidate.executablePath || entryHint.executablePath),
+      color: getColorFromKey(candidate.key),
       startedAt: now,
       lastSeenAt: now,
       trackingMode: 'playback',
-      trackingSource: 'smtc',
-      sourceAppUserModelId,
-      mediaTitle: sanitizeText(session.title),
-      mediaArtist: sanitizeText(session.artist),
-      mediaAlbumTitle: sanitizeText(session.albumTitle),
-      playbackStatus: sanitizeText(session.playbackStatus),
-      playbackType: sanitizeText(session.playbackType)
+      trackingSource: sanitizeText(candidate.trackingSource),
+      sourceAppUserModelId: sanitizeText(candidate.sourceAppUserModelId),
+      mediaTitle: sanitizeText(candidate.mediaTitle),
+      mediaArtist: sanitizeText(candidate.mediaArtist),
+      mediaAlbumTitle: sanitizeText(candidate.mediaAlbumTitle),
+      playbackStatus: sanitizeText(candidate.playbackStatus),
+      playbackType: sanitizeText(candidate.playbackType),
+      processId: Number(candidate.processId) || 0,
+      processName: sanitizeText(candidate.processName),
+      audioSessionState: sanitizeText(candidate.audioSessionState),
+      audioPeakValue: Number(candidate.audioPeakValue) || 0,
+      audioIsMuted: Boolean(candidate.audioIsMuted),
+      audioEndpointId: sanitizeText(candidate.audioEndpointId),
+      audioSessionIdentifier: sanitizeText(candidate.audioSessionIdentifier),
+      audioSessionInstanceIdentifier: sanitizeText(candidate.audioSessionInstanceIdentifier)
     };
+  }
+
+  createPlaybackEntryFromSession(session, now) {
+    const candidate = buildPlaybackCandidateFromSmtc(session) || buildPlaybackCandidateFromWasapi(session);
+    return this.createPlaybackEntryFromCandidate(candidate, now);
   }
 
   shouldSuppressForegroundEntry(entry) {
@@ -1346,6 +2109,14 @@ class UsageTracker {
         mediaAlbumTitle: entry.mediaAlbumTitle,
         playbackStatus: entry.playbackStatus,
         playbackType: entry.playbackType,
+        processId: entry.processId,
+        processName: entry.processName,
+        audioSessionState: entry.audioSessionState,
+        audioPeakValue: entry.audioPeakValue,
+        audioIsMuted: entry.audioIsMuted,
+        audioEndpointId: entry.audioEndpointId,
+        audioSessionIdentifier: entry.audioSessionIdentifier,
+        audioSessionInstanceIdentifier: entry.audioSessionInstanceIdentifier,
         totalMs: 0,
         hourly: new Array(24).fill(0),
         color: entry.color,
@@ -1372,6 +2143,14 @@ class UsageTracker {
     item.mediaAlbumTitle = entry.mediaAlbumTitle || item.mediaAlbumTitle || '';
     item.playbackStatus = entry.playbackStatus || item.playbackStatus || '';
     item.playbackType = entry.playbackType || item.playbackType || '';
+    item.processId = Number(entry.processId) || item.processId || 0;
+    item.processName = entry.processName || item.processName || '';
+    item.audioSessionState = entry.audioSessionState || item.audioSessionState || '';
+    item.audioPeakValue = Math.max(Number(entry.audioPeakValue) || 0, Number(item.audioPeakValue) || 0);
+    item.audioIsMuted = typeof entry.audioIsMuted === 'boolean' ? entry.audioIsMuted : item.audioIsMuted;
+    item.audioEndpointId = entry.audioEndpointId || item.audioEndpointId || '';
+    item.audioSessionIdentifier = entry.audioSessionIdentifier || item.audioSessionIdentifier || '';
+    item.audioSessionInstanceIdentifier = entry.audioSessionInstanceIdentifier || item.audioSessionInstanceIdentifier || '';
     item.color = entry.color;
     return item;
   }
@@ -1442,6 +2221,23 @@ class UsageTracker {
           existing.host = item.host || existing.host;
           existing.pageTitle = item.pageTitle || existing.pageTitle;
           existing.appName = item.appName || existing.appName;
+          existing.executablePath = item.executablePath || existing.executablePath;
+          existing.trackingMode = item.trackingMode || existing.trackingMode;
+          existing.trackingSource = item.trackingSource || existing.trackingSource;
+          existing.sourceAppUserModelId = item.sourceAppUserModelId || existing.sourceAppUserModelId;
+          existing.mediaTitle = item.mediaTitle || existing.mediaTitle;
+          existing.mediaArtist = item.mediaArtist || existing.mediaArtist;
+          existing.mediaAlbumTitle = item.mediaAlbumTitle || existing.mediaAlbumTitle;
+          existing.playbackStatus = item.playbackStatus || existing.playbackStatus;
+          existing.playbackType = item.playbackType || existing.playbackType;
+          existing.processId = item.processId || existing.processId || 0;
+          existing.processName = item.processName || existing.processName;
+          existing.audioSessionState = item.audioSessionState || existing.audioSessionState;
+          existing.audioPeakValue = Math.max(Number(existing.audioPeakValue) || 0, Number(item.audioPeakValue) || 0);
+          existing.audioIsMuted = typeof item.audioIsMuted === 'boolean' ? item.audioIsMuted : existing.audioIsMuted;
+          existing.audioEndpointId = item.audioEndpointId || existing.audioEndpointId;
+          existing.audioSessionIdentifier = item.audioSessionIdentifier || existing.audioSessionIdentifier;
+          existing.audioSessionInstanceIdentifier = item.audioSessionInstanceIdentifier || existing.audioSessionInstanceIdentifier;
         }
       }
     }
@@ -1528,6 +2324,8 @@ class UsageTracker {
 
 module.exports = {
   UsageTracker,
+  PlaybackSessionFusionService,
+  HelperBackedPlaybackSessionFusionService,
   migrateUsageData,
   migrateUsageDataFile,
   LOOPBACK_PORT,
@@ -1543,7 +2341,14 @@ module.exports = {
     buildMediaSubtitle,
     findMusicAppProfile,
     isTrackableMusicSession,
+    isTrackableWasapiSession,
     isBrowserSourceAppUserModelId,
-    parseSmtcSnapshotOutput
+    parseSmtcSnapshotOutput,
+    parseWasapiSnapshotOutput,
+    buildPlaybackCandidateFromSmtc,
+    buildPlaybackCandidateFromWasapi,
+    fusePlaybackCandidates,
+    clonePlaybackCandidateList,
+    HelperBackedPlaybackSessionFusionService
   }
 };

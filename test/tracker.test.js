@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -137,6 +138,65 @@ test('SMTC music session filtering ignores paused sessions and browser sessions'
   }), false);
 });
 
+test('WASAPI session filtering accepts active music apps and rejects browsers', () => {
+  assert.equal(__testables.isTrackableWasapiSession({
+    state: 'Active',
+    processId: 123,
+    processName: 'CloudMusic',
+    executablePath: 'C:\\Program Files\\NetEase\\CloudMusic\\cloudmusic.exe',
+    displayName: '网易云音乐'
+  }), true);
+
+  assert.equal(__testables.isTrackableWasapiSession({
+    state: 'Inactive',
+    processId: 123,
+    processName: 'QQMusic',
+    executablePath: 'C:\\Program Files\\QQMusic\\QQMusic.exe',
+    displayName: 'QQ音乐'
+  }), false);
+
+  assert.equal(__testables.isTrackableWasapiSession({
+    state: 'Active',
+    processId: 123,
+    processName: 'msedge',
+    executablePath: 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    displayName: 'Edge'
+  }), false);
+});
+
+test('fusion prefers SMTC metadata and WASAPI process details for the same music app', () => {
+  const [candidate] = __testables.fusePlaybackCandidates({
+    smtcSessions: [{
+      sourceAppUserModelId: 'QQMusic.exe',
+      playbackStatus: 'Playing',
+      playbackType: 'Music',
+      title: '寄り道 (Detour)',
+      artist: 'とた',
+      albumTitle: 'Sebone'
+    }],
+    wasapiSessions: [{
+      endpointId: 'default-device',
+      state: 'Active',
+      peakValue: 0.42,
+      isMuted: false,
+      processId: 321,
+      processName: 'QQMusic',
+      executablePath: 'C:\\Program Files\\QQMusic\\QQMusic.exe',
+      sessionIdentifier: 'session-id',
+      sessionInstanceIdentifier: 'session-instance',
+      displayName: 'QQ 音乐',
+      iconPath: ''
+    }]
+  });
+
+  assert.equal(candidate.key, 'music:qqmusic');
+  assert.equal(candidate.trackingSource, 'hybrid');
+  assert.equal(candidate.mediaTitle, '寄り道 (Detour)');
+  assert.equal(candidate.processName, 'QQMusic');
+  assert.equal(candidate.audioSessionState, 'Active');
+  assert.equal(candidate.audioPeakValue, 0.42);
+});
+
 test('playback entries reuse stable music keys and suppress duplicate foreground counting', () => {
   const tracker = new UsageTracker({
     userDataPath: path.join(__dirname, '.tmp-tracker'),
@@ -166,14 +226,17 @@ test('playback entries reuse stable music keys and suppress duplicate foreground
   assert.equal(playbackEntry.key, 'music:qqmusic');
   assert.equal(playbackEntry.subtitle, 'とた - 寄り道 (Detour)');
 
-  tracker.replacePlaybackEntries([{
-    sourceAppUserModelId: 'QQMusic.exe',
-    playbackStatus: 'Playing',
-    playbackType: 'Music',
-    title: '寄り道 (Detour)',
-    artist: 'とた',
-    albumTitle: 'Sebone'
-  }], now);
+  tracker.replacePlaybackEntries(__testables.fusePlaybackCandidates({
+    smtcSessions: [{
+      sourceAppUserModelId: 'QQMusic.exe',
+      playbackStatus: 'Playing',
+      playbackType: 'Music',
+      title: '寄り道 (Detour)',
+      artist: 'とた',
+      albumTitle: 'Sebone'
+    }],
+    wasapiSessions: []
+  }), now);
 
   assert.equal(tracker.shouldSuppressForegroundEntry(foregroundEntry), true);
 });
@@ -189,4 +252,67 @@ test('SMTC json parser normalizes single-object payloads', () => {
     artist: 'Artist',
     albumTitle: 'Album'
   });
+});
+
+test('WASAPI json parser normalizes single-object payloads', () => {
+  const [session] = __testables.parseWasapiSnapshotOutput('{"endpointId":"default","state":"Active","peakValue":0.25,"isMuted":false,"processId":888,"processName":"QQMusic","executablePath":"C:\\\\Program Files\\\\QQMusic\\\\QQMusic.exe","sessionIdentifier":"sid","sessionInstanceIdentifier":"iid","displayName":"QQ 音乐","iconPath":""}');
+
+  assert.deepEqual(session, {
+    endpointId: 'default',
+    state: 'Active',
+    peakValue: 0.25,
+    isMuted: false,
+    processId: 888,
+    processName: 'QQMusic',
+    executablePath: 'C:\\Program Files\\QQMusic\\QQMusic.exe',
+    sessionIdentifier: 'sid',
+    sessionInstanceIdentifier: 'iid',
+    displayName: 'QQ 音乐',
+    iconPath: ''
+  });
+});
+
+test('helper-backed fusion service returns cached helper snapshots', async () => {
+  const sentMessages = [];
+  const fakeChild = new EventEmitter();
+  fakeChild.send = (message) => {
+    sentMessages.push(message);
+    if (message?.type === 'shutdown') {
+      fakeChild.emit('exit', 0);
+    }
+  };
+  fakeChild.kill = () => {
+    fakeChild.emit('exit', 0);
+    return true;
+  };
+
+  const service = new __testables.HelperBackedPlaybackSessionFusionService({
+    spawnHelper: () => fakeChild,
+    restartDelayMs: 1
+  });
+
+  const firstSnapshot = await service.poll();
+  assert.deepEqual(firstSnapshot, []);
+
+  fakeChild.emit('message', {
+    type: 'snapshot',
+    updatedAt: 123,
+    snapshot: [{
+      key: 'music:qqmusic',
+      label: 'QQ音乐',
+      appName: 'QQ音乐',
+      subtitle: 'とた - 寄り道 (Detour)',
+      providers: ['smtc', 'wasapi'],
+      trackingMode: 'playback',
+      trackingSource: 'hybrid'
+    }]
+  });
+
+  const secondSnapshot = await service.poll();
+  assert.equal(secondSnapshot[0].key, 'music:qqmusic');
+  assert.deepEqual(secondSnapshot[0].providers, ['smtc', 'wasapi']);
+  assert.notEqual(secondSnapshot[0], service.latestSnapshot[0]);
+
+  await service.dispose();
+  assert.equal(sentMessages.some((message) => message?.type === 'shutdown'), true);
 });
