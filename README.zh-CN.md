@@ -117,6 +117,8 @@ app-usage-tracker-cli days --format json
 http://127.0.0.1:32123/v1/browser-event
 ```
 
+如果桌面端在一段时间内没有收到扩展心跳，应用界面会提示当前未检测到浏览器插件连接。
+
 ## AI Skill 文件
 
 项目在 [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) 中提供了可供 AI 应用使用的 skill 文件，方便通过 CLI 查询本地使用数据。

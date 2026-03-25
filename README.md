@@ -117,6 +117,8 @@ The extension reports active tab metadata to:
 http://127.0.0.1:32123/v1/browser-event
 ```
 
+If the desktop app stops receiving extension heartbeats for a while, the UI shows a warning that the browser extension is not currently connected.
+
 ## AI Skill Files
 
 The project includes AI skill files in [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) so assistants can query local usage data through the CLI.

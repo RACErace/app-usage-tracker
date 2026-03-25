@@ -30,6 +30,11 @@
             <button class="pill-button" type="button" id="next-day">›</button>
           </section>
 
+          <article class="card overview-warning-card" id="browser-extension-warning" hidden>
+            <div class="warning-banner-title">浏览器插件未连接</div>
+            <p class="warning-banner-text" id="browser-extension-warning-text"></p>
+          </article>
+
           <div class="overview-grid">
             <section class="section-block chart-section">
               <div class="section-title-row">
@@ -185,6 +190,11 @@
             <article class="bridge-card settings-help-card">
               <div>
                 <h3>浏览器网页识别</h3>
+                <div class="setting-status-line bridge-status-line">
+                  <span class="status-dot" id="browser-extension-status-dot"></span>
+                  <span class="status-text" id="browser-extension-status-text">读取中</span>
+                </div>
+                <p class="bridge-status-detail" id="browser-extension-status-detail"></p>
                 <p id="settings-bridge-url-text"></p>
               </div>
               <p class="bridge-hint">当前会把同一个根域名下的网页合并统计，例如不同的 bilibili 视频页都会记到 bilibili。</p>
