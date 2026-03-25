@@ -1788,6 +1788,24 @@ class UsageTracker {
     await fs.writeFile(this.dataFilePath, JSON.stringify(this.data, null, 2), 'utf8');
   }
 
+  async flush() {
+    const now = Date.now();
+    this.commitCurrentEntry(now);
+    this.commitPlaybackEntries(now);
+    await this.save();
+  }
+
+  async replaceData(nextData) {
+    const migrated = migrateUsageData(nextData);
+    this.data = migrated.data;
+    this.currentEntry = null;
+    this.currentPlaybackEntries = new Map();
+    this.entryHints.clear();
+    this.resetDerivedCaches();
+    await this.save();
+    await this.emitDataChanged();
+  }
+
   async startBrowserBridge() {
     this.httpServer = http.createServer((request, response) => {
       const origin = request.headers.origin;
