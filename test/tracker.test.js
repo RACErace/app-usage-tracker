@@ -6,6 +6,7 @@ const { spawnSync } = require('node:child_process');
 const {
   BRIDGE_SHARED_HEADER_NAME,
   BRIDGE_SHARED_HEADER_VALUE,
+  UsageTracker,
   migrateUsageData,
   __testables
 } = require('../src/main/tracker');
@@ -97,4 +98,95 @@ test('migration keeps private-suffix websites separated instead of collapsing th
   const [item] = Object.values(migrated.data.days['2026-03-08'].items);
   assert.equal(item.host, 'foo.github.io');
   assert.equal(item.label, 'foo');
+});
+
+test('music app profiles match desktop app names and SMTC source ids', () => {
+  assert.equal(
+    __testables.findMusicAppProfile({
+      appName: 'QQMusic',
+      executablePath: 'C:\\Program Files\\QQMusic\\QQMusic.exe'
+    })?.id,
+    'qqmusic'
+  );
+
+  assert.equal(
+    __testables.findMusicAppProfile({
+      sourceAppUserModelId: 'AppleInc.AppleMusicWin_nzyj5cx40ttqa!App'
+    })?.id,
+    'apple-music'
+  );
+});
+
+test('SMTC music session filtering ignores paused sessions and browser sessions', () => {
+  assert.equal(__testables.isTrackableMusicSession({
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Unknown'
+  }), true);
+
+  assert.equal(__testables.isTrackableMusicSession({
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Paused',
+    playbackType: 'Music'
+  }), false);
+
+  assert.equal(__testables.isTrackableMusicSession({
+    sourceAppUserModelId: 'msedge.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music'
+  }), false);
+});
+
+test('playback entries reuse stable music keys and suppress duplicate foreground counting', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker'),
+    onDataChanged: null
+  });
+
+  const now = 1700000000000;
+  const foregroundEntry = tracker.normalizeWindow({
+    title: '正在播放',
+    owner: {
+      name: 'QQMusic',
+      path: 'C:\\Program Files\\QQMusic\\QQMusic.exe'
+    }
+  }, now);
+
+  assert.equal(foregroundEntry.key, 'music:qqmusic');
+
+  const playbackEntry = tracker.createPlaybackEntryFromSession({
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music',
+    title: '寄り道 (Detour)',
+    artist: 'とた',
+    albumTitle: 'Sebone'
+  }, now);
+
+  assert.equal(playbackEntry.key, 'music:qqmusic');
+  assert.equal(playbackEntry.subtitle, 'とた - 寄り道 (Detour)');
+
+  tracker.replacePlaybackEntries([{
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music',
+    title: '寄り道 (Detour)',
+    artist: 'とた',
+    albumTitle: 'Sebone'
+  }], now);
+
+  assert.equal(tracker.shouldSuppressForegroundEntry(foregroundEntry), true);
+});
+
+test('SMTC json parser normalizes single-object payloads', () => {
+  const [session] = __testables.parseSmtcSnapshotOutput('{"sourceAppUserModelId":"QQMusic.exe","playbackStatus":"Playing","playbackType":"Music","title":"Track","artist":"Artist","albumTitle":"Album"}');
+
+  assert.deepEqual(session, {
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music',
+    title: 'Track',
+    artist: 'Artist',
+    albumTitle: 'Album'
+  });
 });

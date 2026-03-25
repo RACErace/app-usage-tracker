@@ -1,6 +1,8 @@
 const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { getDomain } = require('tldts');
 
 const DATA_VERSION = 3;
@@ -13,7 +15,63 @@ const LOOPBACK_PORT = 32123;
 const BRIDGE_SHARED_HEADER_NAME = 'x-app-usage-tracker-bridge';
 const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
 const ALLOWED_BRIDGE_ORIGIN_PREFIXES = ['chrome-extension://', 'moz-extension://'];
+const SMTC_COMMAND_TIMEOUT_MS = 4500;
+const SMTC_MAX_BUFFER_BYTES = 256 * 1024;
+const SMTC_PLAYBACK_STATUS_PLAYING = 'Playing';
+const SMTC_PLAYBACK_TYPE_MUSIC = 'Music';
 let activeWinLoader = null;
+const execFileAsync = promisify(execFile);
+const WINDOWS_POWERSHELL_PATH = process.platform === 'win32'
+  ? path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  : '';
+
+const SMTC_SNAPSHOT_COMMAND = Buffer.from(`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+
+function Await-WinRt($Operation, $ResultType) {
+  $asTaskMethod = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethodDefinition -and $_.GetParameters().Count -eq 1 } |
+    Select-Object -First 1
+
+  $netTask = $asTaskMethod.MakeGenericMethod(@($ResultType)).Invoke($null, @($Operation))
+  $netTask.Wait(${SMTC_COMMAND_TIMEOUT_MS}) | Out-Null
+  return $netTask.GetType().GetProperty('Result').GetValue($netTask)
+}
+
+try {
+  $managerType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media, ContentType=WindowsRuntime]
+  $propsType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media, ContentType=WindowsRuntime]
+  $manager = Await-WinRt ($managerType::RequestAsync()) $managerType
+  $result = @()
+
+  if ($manager) {
+    foreach ($session in @($manager.GetSessions())) {
+      try {
+        $playbackInfo = $session.GetPlaybackInfo()
+        $mediaProps = Await-WinRt ($session.TryGetMediaPropertiesAsync()) $propsType
+
+        $result += [ordered]@{
+          sourceAppUserModelId = [string]$session.SourceAppUserModelId
+          playbackStatus = [string]$playbackInfo.PlaybackStatus
+          playbackType = [string]$mediaProps.PlaybackType
+          title = [string]$mediaProps.Title
+          artist = [string]$mediaProps.Artist
+          albumTitle = [string]$mediaProps.AlbumTitle
+        }
+      } catch {
+        # Ignore projection failures for individual sessions.
+      }
+    }
+  }
+
+  ConvertTo-Json -Compress -Depth 4 -InputObject @($result)
+} catch {
+  '[]'
+}
+`, 'utf16le').toString('base64');
 
 const BROWSER_APP_PATTERNS = [
   { family: 'Chrome', names: ['chrome', 'google chrome'] },
@@ -162,6 +220,47 @@ function getExecutableName(executablePath) {
   }
 }
 
+function stripExecutableExtension(value) {
+  return sanitizeText(value).replace(/\.(exe|app)$/i, '');
+}
+
+function getExecutableToken(value) {
+  const executableName = getExecutableName(value) || sanitizeText(value);
+  return normalizeComparableToken(stripExecutableExtension(executableName));
+}
+
+function getSourceAppUserModelIdToken(value) {
+  return normalizeComparableToken(sanitizeText(value).split('!')[0]);
+}
+
+function buildMediaSubtitle({ title, artist, fallback = '' }) {
+  const normalizedTitle = sanitizeText(title);
+  const normalizedArtist = sanitizeText(artist);
+  if (normalizedArtist && normalizedTitle) {
+    return `${normalizedArtist} - ${normalizedTitle}`;
+  }
+
+  return normalizedTitle || normalizedArtist || sanitizeText(fallback);
+}
+
+function humanizeMusicAppName(value) {
+  const rawValue = sanitizeText(value);
+  if (!rawValue) {
+    return '音乐播放';
+  }
+
+  const withoutAppId = rawValue.split('!')[0];
+  const baseName = withoutAppId.split(/[\\/]/).pop() || withoutAppId;
+  const withoutExtension = stripExecutableExtension(baseName);
+  const candidate = withoutExtension.split('.').filter(Boolean).pop() || withoutExtension;
+  const spaced = candidate
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim();
+
+  return spaced || rawValue;
+}
+
 const SERVICE_PROFILES = [
   {
     id: 'chatgpt',
@@ -183,6 +282,57 @@ const SERVICE_PROFILES = [
   executableTokens: profile.executables.map((value) => normalizeComparableToken(value)).filter(Boolean)
 }));
 
+const MUSIC_APP_PROFILES = [
+  {
+    id: 'qqmusic',
+    displayLabel: 'QQ音乐',
+    aliases: ['QQMusic', 'QQ 音乐', 'QQ音乐', 'QQMusic.exe']
+  },
+  {
+    id: 'netease-cloud-music',
+    displayLabel: '网易云音乐',
+    aliases: ['CloudMusic', 'Netease Cloud Music', '网易云音乐', 'cloudmusic.exe']
+  },
+  {
+    id: 'spotify',
+    displayLabel: 'Spotify',
+    aliases: ['Spotify', 'spotify.exe']
+  },
+  {
+    id: 'apple-music',
+    displayLabel: 'Apple Music',
+    aliases: ['Apple Music', 'AppleMusic', 'AppleMusic.exe', 'AppleMusicWin']
+  },
+  {
+    id: 'kugou',
+    displayLabel: '酷狗音乐',
+    aliases: ['KuGou', 'KuGou Music', '酷狗音乐', 'KuGou.exe']
+  },
+  {
+    id: 'kuwo',
+    displayLabel: '酷我音乐',
+    aliases: ['Kuwo', 'Kuwo Music', '酷我音乐', 'KwMusic.exe']
+  },
+  {
+    id: 'foobar2000',
+    displayLabel: 'foobar2000',
+    aliases: ['foobar2000', 'foobar2000.exe']
+  },
+  {
+    id: 'musicbee',
+    displayLabel: 'MusicBee',
+    aliases: ['MusicBee', 'MusicBee.exe']
+  },
+  {
+    id: 'aimp',
+    displayLabel: 'AIMP',
+    aliases: ['AIMP', 'AIMP.exe']
+  }
+].map((profile) => ({
+  ...profile,
+  matchTokens: [...new Set(profile.aliases.map((value) => normalizeComparableToken(stripExecutableExtension(value))).filter(Boolean))]
+}));
+
 function getBrowserFamily(appName) {
   const normalized = sanitizeText(appName).toLowerCase();
   const match = BROWSER_APP_PATTERNS.find((pattern) => pattern.names.includes(normalized));
@@ -191,6 +341,37 @@ function getBrowserFamily(appName) {
 
 function isBrowserApp(appName) {
   return Boolean(getBrowserFamily(appName));
+}
+
+function isBrowserSourceAppUserModelId(sourceAppUserModelId) {
+  const normalized = getSourceAppUserModelIdToken(sourceAppUserModelId);
+  if (!normalized) {
+    return false;
+  }
+
+  return BROWSER_APP_PATTERNS.some((pattern) => pattern.names.some((name) => normalized.includes(normalizeComparableToken(name))));
+}
+
+function findMusicAppProfile(entry) {
+  if (!entry) {
+    return null;
+  }
+
+  const tokens = new Set([
+    normalizeComparableToken(entry.appName),
+    normalizeComparableToken(entry.label),
+    getExecutableToken(entry.executablePath),
+    getExecutableToken(entry.sourceAppUserModelId)
+  ].filter(Boolean));
+  const sourceAppToken = getSourceAppUserModelIdToken(entry.sourceAppUserModelId);
+
+  return MUSIC_APP_PROFILES.find((profile) => profile.matchTokens.some((token) => {
+    if (tokens.has(token)) {
+      return true;
+    }
+
+    return Boolean(sourceAppToken) && sourceAppToken.includes(token);
+  })) || null;
 }
 
 function findServiceProfile(entry) {
@@ -316,7 +497,15 @@ function cloneStoredItem(item) {
     ...item,
     hourly: ensureArray24(item.hourly),
     totalMs: Number(item.totalMs) || 0,
-    lastSeenAt: Number(item.lastSeenAt) || 0
+    lastSeenAt: Number(item.lastSeenAt) || 0,
+    trackingMode: sanitizeText(item.trackingMode),
+    trackingSource: sanitizeText(item.trackingSource),
+    sourceAppUserModelId: sanitizeText(item.sourceAppUserModelId),
+    mediaTitle: sanitizeText(item.mediaTitle),
+    mediaArtist: sanitizeText(item.mediaArtist),
+    mediaAlbumTitle: sanitizeText(item.mediaAlbumTitle),
+    playbackStatus: sanitizeText(item.playbackStatus),
+    playbackType: sanitizeText(item.playbackType)
   };
 }
 
@@ -383,7 +572,125 @@ function mergeStoredItems(target, source) {
     target.host = source.host || target.host;
     target.path = source.path || target.path;
     target.executablePath = source.executablePath || target.executablePath;
+    target.trackingMode = source.trackingMode || target.trackingMode;
+    target.trackingSource = source.trackingSource || target.trackingSource;
+    target.sourceAppUserModelId = source.sourceAppUserModelId || target.sourceAppUserModelId;
+    target.mediaTitle = source.mediaTitle || target.mediaTitle;
+    target.mediaArtist = source.mediaArtist || target.mediaArtist;
+    target.mediaAlbumTitle = source.mediaAlbumTitle || target.mediaAlbumTitle;
+    target.playbackStatus = source.playbackStatus || target.playbackStatus;
+    target.playbackType = source.playbackType || target.playbackType;
     target.lastSeenAt = sourceSeenAt;
+  }
+}
+
+function normalizeSmtcSession(item) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  return {
+    sourceAppUserModelId: sanitizeText(item.sourceAppUserModelId),
+    playbackStatus: sanitizeText(item.playbackStatus),
+    playbackType: sanitizeText(item.playbackType),
+    title: sanitizeText(item.title),
+    artist: sanitizeText(item.artist),
+    albumTitle: sanitizeText(item.albumTitle)
+  };
+}
+
+function parseSmtcSnapshotOutput(stdout) {
+  const rawOutput = sanitizeText(stdout);
+  if (!rawOutput) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawOutput);
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.map((item) => normalizeSmtcSession(item)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isTrackableMusicSession(session) {
+  if (!session) {
+    return false;
+  }
+
+  if (sanitizeText(session.playbackStatus) !== SMTC_PLAYBACK_STATUS_PLAYING) {
+    return false;
+  }
+
+  if (findMusicAppProfile(session)) {
+    return true;
+  }
+
+  if (sanitizeText(session.playbackType) !== SMTC_PLAYBACK_TYPE_MUSIC) {
+    return false;
+  }
+
+  return !isBrowserSourceAppUserModelId(session.sourceAppUserModelId);
+}
+
+class SmtcSessionBridge {
+  constructor() {
+    this.sessions = [];
+    this.pendingPoll = null;
+    this.disabled = process.platform !== 'win32';
+    this.lastSuccessAt = 0;
+  }
+
+  getSessions() {
+    return this.sessions.map((session) => ({ ...session }));
+  }
+
+  async poll() {
+    if (this.disabled) {
+      return this.getSessions();
+    }
+
+    if (this.pendingPoll) {
+      return this.pendingPoll;
+    }
+
+    this.pendingPoll = this.fetchSessions()
+      .then((sessions) => {
+        this.sessions = sessions;
+        this.lastSuccessAt = Date.now();
+        return this.getSessions();
+      })
+      .catch((error) => {
+        if (error && error.code === 'ENOENT') {
+          this.disabled = true;
+        }
+
+        if (!this.lastSuccessAt || (Date.now() - this.lastSuccessAt) > (POLL_INTERVAL_MS * 2)) {
+          this.sessions = [];
+        }
+
+        return this.getSessions();
+      })
+      .finally(() => {
+        this.pendingPoll = null;
+      });
+
+    return this.pendingPoll;
+  }
+
+  async fetchSessions() {
+    const result = await execFileAsync(
+      WINDOWS_POWERSHELL_PATH,
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', SMTC_SNAPSHOT_COMMAND],
+      {
+        windowsHide: true,
+        timeout: SMTC_COMMAND_TIMEOUT_MS,
+        maxBuffer: SMTC_MAX_BUFFER_BYTES
+      }
+    );
+
+    return parseSmtcSnapshotOutput(result.stdout);
   }
 }
 
@@ -538,10 +845,13 @@ class UsageTracker {
     this.dataFilePath = path.join(userDataPath, 'usage-data.json');
     this.data = createEmptyData();
     this.currentEntry = null;
+    this.currentPlaybackEntries = new Map();
     this.timer = null;
     this.saveTimer = null;
     this.httpServer = null;
     this.browserEvents = new BrowserEventCache();
+    this.smtcSessionBridge = new SmtcSessionBridge();
+    this.entryHints = new Map();
     this.serializedDayCache = new Map();
     this.sortedDayKeysCache = [];
     this.sortedDayKeysDirty = true;
@@ -563,6 +873,7 @@ class UsageTracker {
     }
 
     this.commitCurrentEntry(Date.now());
+    this.commitPlaybackEntries(Date.now());
     if (this.httpServer) {
       await new Promise((resolve) => this.httpServer.close(resolve));
       this.httpServer = null;
@@ -711,12 +1022,19 @@ class UsageTracker {
   async pollActiveWindow() {
     const now = Date.now();
     this.commitCurrentEntry(now);
+    this.commitPlaybackEntries(now);
 
-    const activeWindow = await getActiveWindow();
+    const [activeWindow, playbackSessions] = await Promise.all([
+      getActiveWindow().catch(() => null),
+      this.smtcSessionBridge.poll()
+    ]);
+    const playbackChanged = this.replacePlaybackEntries(playbackSessions, now);
     const normalized = this.normalizeWindow(activeWindow, now);
-    this.currentEntry = normalized;
+    const nextEntry = this.shouldSuppressForegroundEntry(normalized) ? null : normalized;
+    const previousEntryKey = this.currentEntry ? this.currentEntry.key : null;
+    this.currentEntry = nextEntry;
 
-    if (normalized) {
+    if (nextEntry || this.currentPlaybackEntries.size || playbackChanged || previousEntryKey !== (nextEntry ? nextEntry.key : null)) {
       this.emitDataChanged();
     }
   }
@@ -730,6 +1048,7 @@ class UsageTracker {
     const windowTitle = sanitizeText(activeWindow.title, appName);
     const executablePath = sanitizeText(activeWindow.owner.path || '');
     const browserFamily = getBrowserFamily(appName);
+    const musicProfile = findMusicAppProfile({ appName, executablePath });
 
     if (browserFamily) {
       const browserEvent = this.browserEvents.getFresh(browserFamily);
@@ -756,8 +1075,33 @@ class UsageTracker {
       }
     }
 
+    if (musicProfile) {
+      const musicKey = `music:${musicProfile.id}`;
+      const entry = {
+        key: musicKey,
+        kind: 'app',
+        appName: musicProfile.displayLabel,
+        browserFamily: null,
+        pageTitle: '',
+        windowTitle,
+        url: '',
+        host: '',
+        path: '',
+        label: musicProfile.displayLabel,
+        subtitle: windowTitle,
+        color: getColorFromKey(musicKey),
+        startedAt: now,
+        lastSeenAt: now,
+        executablePath,
+        trackingMode: 'foreground',
+        trackingSource: 'foreground'
+      };
+      this.rememberEntryHint(entry);
+      return entry;
+    }
+
     const appKey = `app:${toIdSegment(appName)}:${hashString(`${appName}|${executablePath}`)}`;
-    return canonicalizeEntry({
+    const entry = canonicalizeEntry({
       key: appKey,
       kind: 'app',
       appName,
@@ -772,24 +1116,165 @@ class UsageTracker {
       color: getColorFromKey(appKey),
       startedAt: now,
       lastSeenAt: now,
-      executablePath
+      executablePath,
+      trackingMode: 'foreground',
+      trackingSource: 'foreground'
     });
+    this.rememberEntryHint(entry);
+    return entry;
   }
 
   commitCurrentEntry(now) {
-    if (!this.currentEntry) {
-      return;
+    if (this.commitLiveEntry(this.currentEntry, now)) {
+      this.scheduleSave();
+    }
+  }
+
+  commitPlaybackEntries(now) {
+    let changed = false;
+    for (const entry of this.currentPlaybackEntries.values()) {
+      changed = this.commitLiveEntry(entry, now) || changed;
     }
 
-    const startedAt = this.currentEntry.lastSeenAt || this.currentEntry.startedAt;
+    if (changed) {
+      this.scheduleSave();
+    }
+  }
+
+  commitLiveEntry(entry, now) {
+    if (!entry) {
+      return false;
+    }
+
+    const startedAt = entry.lastSeenAt || entry.startedAt;
     if (!startedAt || now <= startedAt) {
-      this.currentEntry.lastSeenAt = now;
+      entry.lastSeenAt = now;
+      return false;
+    }
+
+    this.allocateDuration(entry, startedAt, now);
+    entry.lastSeenAt = now;
+    return true;
+  }
+
+  replacePlaybackEntries(playbackSessions, now) {
+    const previousState = JSON.stringify(
+      [...this.currentPlaybackEntries.values()]
+        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || ''])
+        .sort((left, right) => left[0].localeCompare(right[0]))
+    );
+
+    const nextEntries = new Map();
+    for (const session of playbackSessions) {
+      const entry = this.createPlaybackEntryFromSession(session, now);
+      if (!entry) {
+        continue;
+      }
+
+      const existing = nextEntries.get(entry.key);
+      if (!existing) {
+        nextEntries.set(entry.key, entry);
+        continue;
+      }
+
+      if (!existing.mediaTitle && entry.mediaTitle) {
+        existing.mediaTitle = entry.mediaTitle;
+      }
+      if (!existing.mediaArtist && entry.mediaArtist) {
+        existing.mediaArtist = entry.mediaArtist;
+      }
+      if (!existing.mediaAlbumTitle && entry.mediaAlbumTitle) {
+        existing.mediaAlbumTitle = entry.mediaAlbumTitle;
+      }
+      existing.subtitle = existing.subtitle || entry.subtitle;
+      existing.windowTitle = existing.windowTitle || entry.windowTitle;
+      existing.sourceAppUserModelId = existing.sourceAppUserModelId || entry.sourceAppUserModelId;
+      existing.playbackStatus = entry.playbackStatus || existing.playbackStatus;
+      existing.playbackType = entry.playbackType || existing.playbackType;
+      existing.executablePath = existing.executablePath || entry.executablePath;
+    }
+
+    this.currentPlaybackEntries = nextEntries;
+    for (const entry of this.currentPlaybackEntries.values()) {
+      this.rememberEntryHint(entry);
+    }
+
+    const nextState = JSON.stringify(
+      [...this.currentPlaybackEntries.values()]
+        .map((entry) => [entry.key, entry.mediaTitle || '', entry.mediaArtist || ''])
+        .sort((left, right) => left[0].localeCompare(right[0]))
+    );
+
+    return previousState !== nextState;
+  }
+
+  createPlaybackEntryFromSession(session, now) {
+    if (!isTrackableMusicSession(session)) {
+      return null;
+    }
+
+    const profile = findMusicAppProfile(session);
+    const sourceAppUserModelId = sanitizeText(session.sourceAppUserModelId);
+    const key = profile
+      ? `music:${profile.id}`
+      : `music:${hashString(sourceAppUserModelId.toLowerCase())}`;
+    const entryHint = this.entryHints.get(key) || {};
+    const label = sanitizeText(
+      entryHint.label || entryHint.appName || profile?.displayLabel || humanizeMusicAppName(sourceAppUserModelId),
+      '音乐播放'
+    );
+    const subtitle = buildMediaSubtitle({
+      title: session.title,
+      artist: session.artist,
+      fallback: label
+    });
+
+    return {
+      key,
+      kind: 'app',
+      label,
+      subtitle,
+      appName: sanitizeText(entryHint.appName || profile?.displayLabel || label, label),
+      browserFamily: null,
+      pageTitle: '',
+      windowTitle: subtitle || label,
+      url: '',
+      host: '',
+      path: '',
+      executablePath: sanitizeText(entryHint.executablePath),
+      color: getColorFromKey(key),
+      startedAt: now,
+      lastSeenAt: now,
+      trackingMode: 'playback',
+      trackingSource: 'smtc',
+      sourceAppUserModelId,
+      mediaTitle: sanitizeText(session.title),
+      mediaArtist: sanitizeText(session.artist),
+      mediaAlbumTitle: sanitizeText(session.albumTitle),
+      playbackStatus: sanitizeText(session.playbackStatus),
+      playbackType: sanitizeText(session.playbackType)
+    };
+  }
+
+  shouldSuppressForegroundEntry(entry) {
+    if (!entry || !entry.key) {
+      return false;
+    }
+
+    return this.currentPlaybackEntries.has(entry.key);
+  }
+
+  rememberEntryHint(entry) {
+    if (!entry || !entry.key) {
       return;
     }
 
-    this.allocateDuration(this.currentEntry, startedAt, now);
-    this.currentEntry.lastSeenAt = now;
-    this.scheduleSave();
+    const existing = this.entryHints.get(entry.key) || {};
+    this.entryHints.set(entry.key, {
+      label: sanitizeText(entry.label, existing.label || ''),
+      appName: sanitizeText(entry.appName, existing.appName || ''),
+      executablePath: sanitizeText(entry.executablePath, existing.executablePath || '')
+    });
   }
 
   allocateDuration(entry, startTimestamp, endTimestamp) {
@@ -853,6 +1338,14 @@ class UsageTracker {
         host: entry.host,
         path: entry.path,
         executablePath: entry.executablePath,
+        trackingMode: entry.trackingMode,
+        trackingSource: entry.trackingSource,
+        sourceAppUserModelId: entry.sourceAppUserModelId,
+        mediaTitle: entry.mediaTitle,
+        mediaArtist: entry.mediaArtist,
+        mediaAlbumTitle: entry.mediaAlbumTitle,
+        playbackStatus: entry.playbackStatus,
+        playbackType: entry.playbackType,
         totalMs: 0,
         hourly: new Array(24).fill(0),
         color: entry.color,
@@ -871,6 +1364,14 @@ class UsageTracker {
     item.host = entry.host;
     item.path = entry.path;
     item.executablePath = entry.executablePath;
+    item.trackingMode = entry.trackingMode || item.trackingMode || '';
+    item.trackingSource = entry.trackingSource || item.trackingSource || '';
+    item.sourceAppUserModelId = entry.sourceAppUserModelId || item.sourceAppUserModelId || '';
+    item.mediaTitle = entry.mediaTitle || item.mediaTitle || '';
+    item.mediaArtist = entry.mediaArtist || item.mediaArtist || '';
+    item.mediaAlbumTitle = entry.mediaAlbumTitle || item.mediaAlbumTitle || '';
+    item.playbackStatus = entry.playbackStatus || item.playbackStatus || '';
+    item.playbackType = entry.playbackType || item.playbackType || '';
     item.color = entry.color;
     return item;
   }
@@ -950,6 +1451,7 @@ class UsageTracker {
       meta: {
         latestDayKey,
         currentEntryKey: this.currentEntry ? this.currentEntry.key : null,
+        currentPlaybackEntryKeys: [...this.currentPlaybackEntries.keys()],
         bridgeUrl: `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}/v1/browser-event`
       },
       daily: {
@@ -1037,6 +1539,11 @@ module.exports = {
     getDayKey,
     getRootDomain,
     isAllowedBridgeOrigin,
-    isBridgeRequestAuthorized
+    isBridgeRequestAuthorized,
+    buildMediaSubtitle,
+    findMusicAppProfile,
+    isTrackableMusicSession,
+    isBrowserSourceAppUserModelId,
+    parseSmtcSnapshotOutput
   }
 };
