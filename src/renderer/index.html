@@ -178,6 +178,38 @@
               </article>
 
               <article class="card settings-panel">
+                <button class="setting-row" type="button" id="auto-backup-toggle" aria-label="切换自动备份">
+                  <div class="setting-copy">
+                    <span class="setting-name">自动备份</span>
+                    <span class="setting-text">应用会按你设定的频率自动生成 JSON 备份，并保存到本地自动备份目录。</span>
+                  </div>
+                  <span class="toggle-switch" id="auto-backup-switch" aria-hidden="true">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </button>
+
+                <div class="settings-inline-form">
+                  <label class="settings-field" for="auto-backup-interval-value">
+                    <span class="settings-field-label">备份频率</span>
+                    <div class="settings-frequency-controls">
+                      <input class="settings-number-input" id="auto-backup-interval-value" type="number" min="1" step="1" value="24" />
+                      <select class="settings-select" id="auto-backup-interval-unit" aria-label="自动备份频率单位">
+                        <option value="hours">小时</option>
+                        <option value="days">天</option>
+                      </select>
+                    </div>
+                  </label>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot" id="auto-backup-dot"></span>
+                  <span class="status-text" id="auto-backup-status">读取中</span>
+                </div>
+
+                <p class="bridge-hint" id="auto-backup-path-text"></p>
+              </article>
+
+              <article class="card settings-panel">
                 <div class="section-title-row settings-section-header">
                   <div>
                     <h3 class="section-title">显示统计项</h3>
