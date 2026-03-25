@@ -1,6 +1,7 @@
 const fs = require('fs/promises');
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
+const { buildBackupPayload, parseBackupPayload, getDefaultBackupFileName } = require('./backup');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
@@ -9,6 +10,9 @@ const SHOW_WINDOW_ARG = '--show-window';
 const CLOSE_ACTION_EXIT = 'exit';
 const CLOSE_ACTION_TRAY = 'tray';
 const CLOSE_ACTION_ASK = 'ask';
+const BACKUP_FILE_FILTERS = [
+  { name: 'JSON 文件', extensions: ['json'] }
+];
 const DEFAULT_APP_SETTINGS = Object.freeze({
   hiddenItemKeys: [],
   closeWindowAction: CLOSE_ACTION_TRAY
@@ -80,6 +84,14 @@ function normalizeCloseWindowAction(value) {
   return CLOSE_ACTION_TRAY;
 }
 
+function normalizeImportedBackupSettings(value) {
+  return {
+    autoLaunchEnabled: Boolean(value?.autoLaunchEnabled),
+    hiddenItemKeys: normalizeHiddenItemKeys(value?.hiddenItemKeys),
+    closeWindowAction: normalizeCloseWindowAction(value?.closeWindowAction)
+  };
+}
+
 function getSettingsPayload() {
   return {
     autoLaunchEnabled,
@@ -129,6 +141,128 @@ async function writeCloseWindowAction(closeWindowAction) {
   appSettings.closeWindowAction = normalizeCloseWindowAction(closeWindowAction);
   await saveAppSettings();
   notifySettingsChanged();
+}
+
+function getBackupDialogBasePath() {
+  const candidateKeys = ['documents', 'desktop', 'home'];
+  for (const candidateKey of candidateKeys) {
+    try {
+      const value = app.getPath(candidateKey);
+      if (value) {
+        return value;
+      }
+    } catch {
+      // Ignore missing platform paths and try the next candidate.
+    }
+  }
+
+  return app.getPath('userData');
+}
+
+async function exportBackupFile() {
+  if (!usageTracker) {
+    throw new Error('使用统计尚未初始化完成。');
+  }
+
+  await usageTracker.flush();
+  const exportedAt = new Date().toISOString();
+  const backupPayload = buildBackupPayload({
+    usageData: usageTracker.data,
+    settings: getSettingsPayload(),
+    appVersion: app.getVersion(),
+    exportedAt
+  });
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: '导出备份',
+    defaultPath: path.join(getBackupDialogBasePath(), getDefaultBackupFileName(new Date(exportedAt))),
+    filters: BACKUP_FILE_FILTERS
+  });
+
+  if (canceled || !filePath) {
+    return { canceled: true };
+  }
+
+  await fs.writeFile(filePath, JSON.stringify(backupPayload, null, 2), 'utf8');
+  return {
+    canceled: false,
+    filePath,
+    exportedAt
+  };
+}
+
+async function applyImportedBackupSettings(restoredSettings) {
+  const normalized = normalizeImportedBackupSettings(restoredSettings);
+  appSettings = {
+    hiddenItemKeys: normalized.hiddenItemKeys,
+    closeWindowAction: normalized.closeWindowAction
+  };
+  await saveAppSettings();
+  writeAutoLaunchState(normalized.autoLaunchEnabled);
+}
+
+function buildRestoreConfirmationDetail(parsedBackup) {
+  if (parsedBackup.settings) {
+    return '恢复会覆盖当前本地使用统计，并同步恢复开机自启动、关闭窗口行为和已隐藏统计项设置。';
+  }
+
+  return '恢复会覆盖当前本地使用统计；这个文件不包含应用设置，所以现有设置会保留。';
+}
+
+async function importBackupFile() {
+  if (!usageTracker) {
+    throw new Error('使用统计尚未初始化完成。');
+  }
+
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: '导入备份',
+    properties: ['openFile'],
+    filters: BACKUP_FILE_FILTERS
+  });
+
+  if (canceled || !filePaths?.length) {
+    return { canceled: true };
+  }
+
+  const filePath = filePaths[0];
+  let parsed;
+
+  try {
+    parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
+  } catch {
+    throw new Error('所选文件不是有效的 JSON 备份文件。');
+  }
+
+  const parsedBackup = parseBackupPayload(parsed);
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['继续恢复', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: '确认恢复备份',
+    message: '恢复后当前本地数据将被替换。',
+    detail: buildRestoreConfirmationDetail(parsedBackup)
+  });
+
+  if (response !== 0) {
+    return { canceled: true };
+  }
+
+  await usageTracker.replaceData(parsedBackup.usageData);
+  if (parsedBackup.settings) {
+    await applyImportedBackupSettings(parsedBackup.settings);
+  }
+
+  await usageTracker.pollActiveWindow().catch(() => {});
+  pushUsageSnapshot({ force: true });
+
+  return {
+    canceled: false,
+    filePath,
+    restoredAt: new Date().toISOString(),
+    exportedAt: parsedBackup.meta.exportedAt,
+    settingsRestored: Boolean(parsedBackup.settings)
+  };
 }
 
 function resolveAppIconPath() {
@@ -474,3 +608,7 @@ ipcMain.handle('usage:get-icons', async (_event, items) => {
 
   return usageIconService.resolveItems(Array.isArray(items) ? items : []);
 });
+
+ipcMain.handle('backup:export', async () => exportBackupFile());
+
+ipcMain.handle('backup:import', async () => importBackupFile());

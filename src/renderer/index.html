@@ -162,6 +162,24 @@
               <article class="card settings-panel">
                 <div class="section-title-row settings-section-header">
                   <div>
+                    <h3 class="section-title">数据备份与恢复</h3>
+                    <p class="settings-description">导出当前统计数据与设置为 JSON 文件；恢复时会覆盖本机现有统计数据，也支持直接导入旧的 usage-data.json。</p>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="option-chip" type="button" id="export-backup-button">导出备份</button>
+                    <button class="option-chip" type="button" id="import-backup-button">导入恢复</button>
+                  </div>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot" id="backup-status-dot"></span>
+                  <span class="status-text" id="backup-status-text">可将当前统计数据与设置导出为 JSON 备份文件。</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <div class="section-title-row settings-section-header">
+                  <div>
                     <h3 class="section-title">显示统计项</h3>
                     <p class="settings-description">只有勾选的项目会显示在排行与详情中，并参与总使用时长计算。</p>
                   </div>

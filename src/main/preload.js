@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('usageApi', {
   getDetail: (itemKey) => ipcRenderer.invoke('usage:get-detail', itemKey),
   getIcons: (items) => ipcRenderer.invoke('usage:get-icons', items),
   getSettings: () => ipcRenderer.invoke('settings:get'),
+  exportBackup: () => ipcRenderer.invoke('backup:export'),
+  importBackup: () => ipcRenderer.invoke('backup:import'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
   setCloseWindowAction: (closeWindowAction) => ipcRenderer.invoke('settings:set-close-window-action', closeWindowAction),
   setHiddenItemKeys: (hiddenItemKeys) => ipcRenderer.invoke('settings:set-hidden-item-keys', hiddenItemKeys),

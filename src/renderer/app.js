@@ -1,3 +1,8 @@
+const DEFAULT_BACKUP_STATUS = Object.freeze({
+  tone: 'neutral',
+  text: '可将当前统计数据与设置导出为 JSON 备份文件，也支持导入旧的 usage-data.json。'
+});
+
 const state = {
   snapshot: null,
   settings: null,
@@ -9,7 +14,10 @@ const state = {
   iconCache: new Map(),
   unsubscribe: null,
   updatingHiddenItems: false,
-  updatingCloseAction: false
+  updatingCloseAction: false,
+  backupBusy: false,
+  backupBusyAction: '',
+  backupStatus: { ...DEFAULT_BACKUP_STATUS }
 };
 
 const elements = {
@@ -55,6 +63,10 @@ const elements = {
   autoLaunchDot: document.getElementById('auto-launch-dot'),
   closeActionStatus: document.getElementById('close-action-status'),
   closeActionButtons: [...document.querySelectorAll('[data-close-action]')],
+  exportBackupButton: document.getElementById('export-backup-button'),
+  importBackupButton: document.getElementById('import-backup-button'),
+  backupStatusDot: document.getElementById('backup-status-dot'),
+  backupStatusText: document.getElementById('backup-status-text'),
   selectedItemsSummary: document.getElementById('selected-items-summary'),
   itemVisibilityList: document.getElementById('item-visibility-list'),
   selectAllItemsButton: document.getElementById('select-all-items-button'),
@@ -127,6 +139,44 @@ function formatWeekRange(dayKeys) {
 function weekdayLabel(dayKey) {
   const value = new Date(`${dayKey}T00:00:00`).getDay();
   return ['日', '一', '二', '三', '四', '五', '六'][value];
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
+}
+
+function getPathLeafName(filePath) {
+  const normalized = typeof filePath === 'string' ? filePath.trim() : '';
+  if (!normalized) {
+    return '';
+  }
+
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] || normalized;
+}
+
+function getErrorMessage(error) {
+  if (error && typeof error.message === 'string' && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return '操作失败，请稍后重试。';
+}
+
+function setBackupStatus(status) {
+  state.backupStatus = {
+    ...DEFAULT_BACKUP_STATUS,
+    ...(status || {})
+  };
 }
 
 function getInitials(item) {
@@ -692,6 +742,9 @@ function renderSettingsState() {
   const snapshot = state.snapshot;
   const enabled = Boolean(state.settings?.autoLaunchEnabled);
   const closeAction = state.settings?.closeWindowAction || 'tray';
+  const backupBusyText = state.backupBusy
+    ? (state.backupBusyAction === 'import' ? '正在导入并恢复备份...' : '正在导出备份...')
+    : state.backupStatus.text;
   const closeActionLabels = {
     exit: '关闭窗口时将直接退出应用',
     tray: '关闭窗口时将最小化到系统托盘',
@@ -710,6 +763,12 @@ function renderSettingsState() {
     button.disabled = state.updatingCloseAction;
     button.setAttribute('aria-checked', isActive ? 'true' : 'false');
   });
+
+  elements.exportBackupButton.disabled = state.backupBusy;
+  elements.importBackupButton.disabled = state.backupBusy;
+  elements.backupStatusDot.classList.toggle('active', state.backupBusy || state.backupStatus.tone === 'success');
+  elements.backupStatusDot.classList.toggle('warning', state.backupStatus.tone === 'error');
+  elements.backupStatusText.textContent = backupBusyText;
 
   elements.settingsBridgeUrlText.textContent = snapshot?.meta?.bridgeUrl
     ? `本地 bridge 地址：${snapshot.meta.bridgeUrl}`
@@ -1032,6 +1091,109 @@ function renderSettingsScreen() {
   showScreen('settings');
 }
 
+async function handleBackupExport() {
+  if (state.backupBusy) {
+    return;
+  }
+
+  state.backupBusy = true;
+  state.backupBusyAction = 'export';
+  renderSettingsScreen();
+
+  try {
+    const result = await window.usageApi.exportBackup();
+    if (result?.canceled) {
+      setBackupStatus({
+        tone: 'neutral',
+        text: '已取消导出备份。'
+      });
+      return;
+    }
+
+    const fileName = getPathLeafName(result?.filePath);
+    const exportedAt = formatDateTime(result?.exportedAt);
+    setBackupStatus({
+      tone: 'success',
+      text: exportedAt
+        ? `备份已导出到 ${fileName || '所选文件'}，导出时间 ${exportedAt}。`
+        : `备份已导出到 ${fileName || '所选文件'}。`
+    });
+  } catch (error) {
+    setBackupStatus({
+      tone: 'error',
+      text: `导出失败：${getErrorMessage(error)}`
+    });
+  } finally {
+    state.backupBusy = false;
+    state.backupBusyAction = '';
+  }
+
+  renderSettingsScreen();
+}
+
+async function handleBackupImport() {
+  if (state.backupBusy) {
+    return;
+  }
+
+  state.backupBusy = true;
+  state.backupBusyAction = 'import';
+  renderSettingsScreen();
+
+  try {
+    const result = await window.usageApi.importBackup();
+    if (result?.canceled) {
+      setBackupStatus({
+        tone: 'neutral',
+        text: '已取消恢复备份。'
+      });
+      return;
+    }
+
+    [state.snapshot, state.settings] = await Promise.all([
+      window.usageApi.getSnapshot(),
+      window.usageApi.getSettings()
+    ]);
+    ensureSelectedDayKey();
+    state.detailItemKey = null;
+    state.detail = null;
+
+    const fileName = getPathLeafName(result?.filePath);
+    const restoredAt = formatDateTime(result?.restoredAt);
+    const exportedAt = formatDateTime(result?.exportedAt);
+    const summaryParts = [
+      `已从 ${fileName || '所选文件'} 恢复备份`
+    ];
+
+    if (exportedAt) {
+      summaryParts.push(`原备份时间 ${exportedAt}`);
+    }
+
+    if (restoredAt) {
+      summaryParts.push(`恢复完成时间 ${restoredAt}`);
+    }
+
+    if (result?.settingsRestored) {
+      summaryParts.push('并已同步恢复应用设置');
+    }
+
+    setBackupStatus({
+      tone: 'success',
+      text: `${summaryParts.join('，')}。`
+    });
+  } catch (error) {
+    setBackupStatus({
+      tone: 'error',
+      text: `恢复失败：${getErrorMessage(error)}`
+    });
+  } finally {
+    state.backupBusy = false;
+    state.backupBusyAction = '';
+  }
+
+  renderSettingsScreen();
+}
+
 async function updateCloseWindowAction(closeWindowAction) {
   if (state.updatingCloseAction) {
     return;
@@ -1228,6 +1390,14 @@ function bindEvents() {
     button.addEventListener('click', () => {
       updateCloseWindowAction(button.dataset.closeAction).catch(() => {});
     });
+  });
+
+  elements.exportBackupButton.addEventListener('click', () => {
+    handleBackupExport().catch(() => {});
+  });
+
+  elements.importBackupButton.addEventListener('click', () => {
+    handleBackupImport().catch(() => {});
   });
 
   elements.selectAllItemsButton.addEventListener('click', () => {
