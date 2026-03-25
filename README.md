@@ -7,7 +7,7 @@ App Usage Tracker is a Windows-focused desktop usage tracker built with Electron
 ## Highlights
 
 - Track foreground app usage time on Windows
-- Track SMTC-backed music playback time, including background playback
+- Track actual music playback time with a hybrid SMTC + WASAPI detector, including background playback
 - Attribute browser time to websites when the browser extension is enabled
 - Aggregate web usage by root domain instead of individual URLs
 - Merge supported desktop apps and websites into the same service bucket
@@ -27,16 +27,17 @@ Windows can reliably identify the active application window, but not the full br
 
 1. The desktop app detects the current foreground window.
 2. The browser extension sends the active tab title and URL to a local bridge.
-3. For SMTC-capable music apps, the desktop app also reads Windows media sessions and records actual playback time.
-4. The desktop app combines these signals and records usage by app, site, or merged service.
+3. For music apps, the desktop app reads both Windows SMTC media sessions and WASAPI audio sessions.
+4. It fuses those signals to record actual playback time for the music app.
+5. The desktop app then combines all signals and records usage by app, site, or merged service.
 
 Without the extension, browser usage is still tracked, but only at the browser app level.
 
 Notes:
 
-- Music playback time comes from Windows SMTC (System Media Transport Controls) sessions and stops accumulating when playback is paused.
+- Music playback time primarily comes from Windows SMTC (System Media Transport Controls) and uses WASAPI audio sessions as a fallback for players that do not expose usable SMTC metadata.
 - Playback time can overlap with another foreground app, so per-item totals can differ from pure foreground-window time.
-- Apps that do not expose an SMTC session fall back to regular foreground-window tracking.
+- Apps that expose neither usable SMTC nor an active WASAPI session fall back to regular foreground-window tracking.
 
 ## Requirements
 
@@ -186,7 +187,7 @@ On tags matching `v*`, it also creates a GitHub Release and uploads:
 - Firefox support is limited; the bundled extension is implemented for Chromium-style extension APIs
 - Service merging is rule-based, not arbitrary cross-app matching
 - Direct favicon or raw asset URLs may occasionally appear as recent web entries
-- Music playback tracking depends on the target app implementing Windows SMTC; browser-based web players are not tracked as separate music apps
+- Music playback tracking still depends on the player exposing a recognizable SMTC or WASAPI session; browser-based web players are not tracked as separate music apps
 
 ## License
 

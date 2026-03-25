@@ -192,6 +192,22 @@ function buildFilteredWeekly(snapshot, hiddenItemKeySet) {
       existing.executablePath = item.executablePath || existing.executablePath;
       existing.browserFamily = item.browserFamily || existing.browserFamily;
       existing.lastSeenAt = item.lastSeenAt || existing.lastSeenAt;
+      existing.trackingMode = item.trackingMode || existing.trackingMode;
+      existing.trackingSource = item.trackingSource || existing.trackingSource;
+      existing.sourceAppUserModelId = item.sourceAppUserModelId || existing.sourceAppUserModelId;
+      existing.mediaTitle = item.mediaTitle || existing.mediaTitle;
+      existing.mediaArtist = item.mediaArtist || existing.mediaArtist;
+      existing.mediaAlbumTitle = item.mediaAlbumTitle || existing.mediaAlbumTitle;
+      existing.playbackStatus = item.playbackStatus || existing.playbackStatus;
+      existing.playbackType = item.playbackType || existing.playbackType;
+      existing.processId = item.processId || existing.processId || 0;
+      existing.processName = item.processName || existing.processName;
+      existing.audioSessionState = item.audioSessionState || existing.audioSessionState;
+      existing.audioPeakValue = Math.max(Number(existing.audioPeakValue) || 0, Number(item.audioPeakValue) || 0);
+      existing.audioIsMuted = typeof item.audioIsMuted === 'boolean' ? item.audioIsMuted : existing.audioIsMuted;
+      existing.audioEndpointId = item.audioEndpointId || existing.audioEndpointId;
+      existing.audioSessionIdentifier = item.audioSessionIdentifier || existing.audioSessionIdentifier;
+      existing.audioSessionInstanceIdentifier = item.audioSessionInstanceIdentifier || existing.audioSessionInstanceIdentifier;
     });
 
     return { dayKey, totalMs: filteredDay.totalMs };
@@ -273,6 +289,22 @@ function buildCatalog(snapshot) {
         existing.host = item.host;
         existing.path = item.path;
         existing.executablePath = item.executablePath;
+        existing.trackingMode = item.trackingMode;
+        existing.trackingSource = item.trackingSource;
+        existing.sourceAppUserModelId = item.sourceAppUserModelId;
+        existing.mediaTitle = item.mediaTitle;
+        existing.mediaArtist = item.mediaArtist;
+        existing.mediaAlbumTitle = item.mediaAlbumTitle;
+        existing.playbackStatus = item.playbackStatus;
+        existing.playbackType = item.playbackType;
+        existing.processId = item.processId;
+        existing.processName = item.processName;
+        existing.audioSessionState = item.audioSessionState;
+        existing.audioPeakValue = item.audioPeakValue;
+        existing.audioIsMuted = item.audioIsMuted;
+        existing.audioEndpointId = item.audioEndpointId;
+        existing.audioSessionIdentifier = item.audioSessionIdentifier;
+        existing.audioSessionInstanceIdentifier = item.audioSessionInstanceIdentifier;
         existing.color = item.color;
         existing.lastSeenAt = item.lastSeenAt;
       }
@@ -302,6 +334,14 @@ function summarizeItem(item) {
     mediaAlbumTitle: item.mediaAlbumTitle || '',
     playbackStatus: item.playbackStatus || '',
     playbackType: item.playbackType || '',
+    processId: Number(item.processId) || 0,
+    processName: item.processName || '',
+    audioSessionState: item.audioSessionState || '',
+    audioPeakValue: Number(item.audioPeakValue) || 0,
+    audioIsMuted: Boolean(item.audioIsMuted),
+    audioEndpointId: item.audioEndpointId || '',
+    audioSessionIdentifier: item.audioSessionIdentifier || '',
+    audioSessionInstanceIdentifier: item.audioSessionInstanceIdentifier || '',
     totalMs: Number(item.totalMs) || 0,
     totalMinutes: toMinutes(item.totalMs),
     color: item.color,
@@ -319,6 +359,7 @@ function getItemSearchFields(item) {
     item.pageTitle,
     item.mediaTitle,
     item.mediaArtist,
+    item.processName,
     item.url,
     item.windowTitle
   ]

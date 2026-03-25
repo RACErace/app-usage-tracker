@@ -1,0 +1,68 @@
+{
+  "version": 3,
+  "days": {
+    "2026-03-25": {
+      "totalMs": 63,
+      "items": {
+        "app:visual-studio-code:84d5d88e": {
+          "key": "app:visual-studio-code:84d5d88e",
+          "kind": "app",
+          "label": "Visual Studio Code",
+          "subtitle": "app-usage-tracker - Visual Studio Code",
+          "appName": "Visual Studio Code",
+          "browserFamily": null,
+          "pageTitle": "",
+          "windowTitle": "app-usage-tracker - Visual Studio Code",
+          "url": "",
+          "host": "",
+          "path": "",
+          "executablePath": "C:\\Users\\race2\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+          "trackingMode": "foreground",
+          "trackingSource": "foreground",
+          "sourceAppUserModelId": "",
+          "mediaTitle": "",
+          "mediaArtist": "",
+          "mediaAlbumTitle": "",
+          "playbackStatus": "",
+          "playbackType": "",
+          "processId": 0,
+          "processName": "",
+          "audioSessionState": "",
+          "audioPeakValue": 0,
+          "audioEndpointId": "",
+          "audioSessionIdentifier": "",
+          "audioSessionInstanceIdentifier": "",
+          "totalMs": 63,
+          "hourly": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            63,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "color": "#f59e0b",
+          "lastSeenAt": 1774419304700
+        }
+      }
+    }
+  }
+}

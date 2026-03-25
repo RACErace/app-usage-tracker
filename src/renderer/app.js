@@ -209,6 +209,22 @@ function getFilteredWeekly(snapshot) {
       existing.appName = item.appName || existing.appName;
       existing.executablePath = item.executablePath || existing.executablePath;
       existing.browserFamily = item.browserFamily || existing.browserFamily;
+      existing.trackingMode = item.trackingMode || existing.trackingMode;
+      existing.trackingSource = item.trackingSource || existing.trackingSource;
+      existing.sourceAppUserModelId = item.sourceAppUserModelId || existing.sourceAppUserModelId;
+      existing.mediaTitle = item.mediaTitle || existing.mediaTitle;
+      existing.mediaArtist = item.mediaArtist || existing.mediaArtist;
+      existing.mediaAlbumTitle = item.mediaAlbumTitle || existing.mediaAlbumTitle;
+      existing.playbackStatus = item.playbackStatus || existing.playbackStatus;
+      existing.playbackType = item.playbackType || existing.playbackType;
+      existing.processId = item.processId || existing.processId || 0;
+      existing.processName = item.processName || existing.processName;
+      existing.audioSessionState = item.audioSessionState || existing.audioSessionState;
+      existing.audioPeakValue = Math.max(Number(existing.audioPeakValue) || 0, Number(item.audioPeakValue) || 0);
+      existing.audioIsMuted = typeof item.audioIsMuted === 'boolean' ? item.audioIsMuted : existing.audioIsMuted;
+      existing.audioEndpointId = item.audioEndpointId || existing.audioEndpointId;
+      existing.audioSessionIdentifier = item.audioSessionIdentifier || existing.audioSessionIdentifier;
+      existing.audioSessionInstanceIdentifier = item.audioSessionInstanceIdentifier || existing.audioSessionInstanceIdentifier;
     });
 
     return { dayKey, totalMs: filteredDay.totalMs };
@@ -249,6 +265,22 @@ function getAllKnownItems() {
         existing.host = item.host;
         existing.path = item.path;
         existing.executablePath = item.executablePath;
+        existing.trackingMode = item.trackingMode;
+        existing.trackingSource = item.trackingSource;
+        existing.sourceAppUserModelId = item.sourceAppUserModelId;
+        existing.mediaTitle = item.mediaTitle;
+        existing.mediaArtist = item.mediaArtist;
+        existing.mediaAlbumTitle = item.mediaAlbumTitle;
+        existing.playbackStatus = item.playbackStatus;
+        existing.playbackType = item.playbackType;
+        existing.processId = item.processId;
+        existing.processName = item.processName;
+        existing.audioSessionState = item.audioSessionState;
+        existing.audioPeakValue = item.audioPeakValue;
+        existing.audioIsMuted = item.audioIsMuted;
+        existing.audioEndpointId = item.audioEndpointId;
+        existing.audioSessionIdentifier = item.audioSessionIdentifier;
+        existing.audioSessionInstanceIdentifier = item.audioSessionInstanceIdentifier;
         existing.color = item.color;
         existing.kind = item.kind;
         existing.lastSeenAt = item.lastSeenAt;
@@ -385,6 +417,22 @@ function getDetailSubtitle(detail) {
   }
 
   return detail.appName || '';
+}
+
+function formatTrackingSourceLabel(trackingSource) {
+  if (trackingSource === 'hybrid') {
+    return 'SMTC + WASAPI';
+  }
+
+  if (trackingSource === 'wasapi') {
+    return 'WASAPI 音频会话';
+  }
+
+  if (trackingSource === 'smtc') {
+    return 'SMTC 播放状态';
+  }
+
+  return '前台窗口';
 }
 
 function getCanvasMetrics(canvas) {
@@ -814,9 +862,12 @@ function renderDetail() {
       ]
     : [
         ['应用', detail.appName],
-        ['计时方式', detail.trackingMode === 'playback' ? 'SMTC 播放状态' : '前台窗口'],
+        ['计时方式', detail.trackingMode === 'playback' ? formatTrackingSourceLabel(detail.trackingSource) : '前台窗口'],
         ['最近播放内容', detail.mediaTitle],
         ['最近播放艺人', detail.mediaArtist],
+        ['音频会话进程', detail.processName],
+        ['音频会话状态', detail.audioSessionState],
+        ['音频峰值', detail.audioPeakValue ? detail.audioPeakValue.toFixed(3) : '0.000'],
         ['来源标识', detail.sourceAppUserModelId],
         ['页面标题', detail.pageTitle || detail.windowTitle],
         ['网页地址', detail.url],
