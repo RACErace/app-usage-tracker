@@ -1,4 +1,5 @@
-const BRIDGE_URL = 'http://127.0.0.1:32123/v1/browser-event';
+const BROWSER_EVENT_URL = 'http://127.0.0.1:32123/v1/browser-event';
+const EXTENSION_HEARTBEAT_URL = 'http://127.0.0.1:32123/v1/extension-heartbeat';
 const BRIDGE_SHARED_HEADER_NAME = 'X-App-Usage-Tracker-Bridge';
 const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
 
@@ -25,6 +26,33 @@ async function getBrowserFamily() {
   return 'Chrome';
 }
 
+function getExtensionVersion() {
+  return chrome.runtime.getManifest()?.version || '';
+}
+
+async function postBridgePayload(url, payload) {
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      [BRIDGE_SHARED_HEADER_NAME]: BRIDGE_SHARED_HEADER_VALUE
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function postExtensionHeartbeat() {
+  try {
+    await postBridgePayload(EXTENSION_HEARTBEAT_URL, {
+      browserFamily: await getBrowserFamily(),
+      extensionVersion: getExtensionVersion(),
+      sentAt: Date.now()
+    });
+  } catch {
+    // 桌面端未运行时静默忽略。
+  }
+}
+
 async function postActiveTab(tabId) {
   if (!tabId) {
     return;
@@ -36,18 +64,12 @@ async function postActiveTab(tabId) {
       return;
     }
 
-    await fetch(BRIDGE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [BRIDGE_SHARED_HEADER_NAME]: BRIDGE_SHARED_HEADER_VALUE
-      },
-      body: JSON.stringify({
-        browserFamily: await getBrowserFamily(),
-        pageTitle: tab.title || tab.url,
-        url: tab.url,
-        sentAt: Date.now()
-      })
+    await postBridgePayload(BROWSER_EVENT_URL, {
+      browserFamily: await getBrowserFamily(),
+      extensionVersion: getExtensionVersion(),
+      pageTitle: tab.title || tab.url,
+      url: tab.url,
+      sentAt: Date.now()
     });
   } catch {
     // 桌面端未运行时静默忽略。
@@ -65,14 +87,19 @@ async function sendCurrentActiveTab() {
   }
 }
 
+function syncCurrentBrowserState() {
+  postExtensionHeartbeat();
+  sendCurrentActiveTab();
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create('usage-tracker-heartbeat', { periodInMinutes: 0.5 });
-  sendCurrentActiveTab();
+  syncCurrentBrowserState();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create('usage-tracker-heartbeat', { periodInMinutes: 0.5 });
-  sendCurrentActiveTab();
+  syncCurrentBrowserState();
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -86,11 +113,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.windows.onFocusChanged.addListener(() => {
-  sendCurrentActiveTab();
+  syncCurrentBrowserState();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'usage-tracker-heartbeat') {
-    sendCurrentActiveTab();
+    syncCurrentBrowserState();
   }
 });

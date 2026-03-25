@@ -9,11 +9,14 @@ const DATA_VERSION = 3;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
 const BROWSER_EVENT_TTL_MS = 65000;
+const BROWSER_EXTENSION_HEARTBEAT_TTL_MS = 125000;
 const MAX_BRIDGE_REQUEST_BYTES = 16 * 1024;
 const LOOPBACK_HOST = '127.0.0.1';
 const LOOPBACK_PORT = 32123;
 const BRIDGE_SHARED_HEADER_NAME = 'x-app-usage-tracker-bridge';
 const BRIDGE_SHARED_HEADER_VALUE = 'usage-tracker-extension';
+const BRIDGE_ENDPOINT_BROWSER_EVENT = '/v1/browser-event';
+const BRIDGE_ENDPOINT_EXTENSION_HEARTBEAT = '/v1/extension-heartbeat';
 const ALLOWED_BRIDGE_ORIGIN_PREFIXES = ['chrome-extension://', 'moz-extension://'];
 const SMTC_COMMAND_TIMEOUT_MS = 4500;
 const SMTC_MAX_BUFFER_BYTES = 256 * 1024;
@@ -738,17 +741,32 @@ async function getActiveWindow() {
 }
 
 class BrowserEventCache {
-  constructor() {
+  constructor({
+    eventTtlMs = BROWSER_EVENT_TTL_MS,
+    heartbeatTtlMs = BROWSER_EXTENSION_HEARTBEAT_TTL_MS
+  } = {}) {
+    this.eventTtlMs = eventTtlMs;
+    this.heartbeatTtlMs = heartbeatTtlMs;
     this.events = new Map();
+    this.extensionStates = new Map();
   }
 
   upsert(payload) {
+    const browserFamily = sanitizeText(payload.browserFamily, 'Chrome');
+    const receivedAt = Date.now();
+    this.markExtensionSeen({
+      browserFamily,
+      extensionVersion: payload.extensionVersion,
+      sentAt: payload.sentAt,
+      receivedAt,
+      source: 'browser-event'
+    });
+
     const normalizedUrl = normalizeUrl(payload.url);
     if (!normalizedUrl) {
-      return;
+      return null;
     }
 
-    const browserFamily = sanitizeText(payload.browserFamily, 'Chrome');
     const key = browserFamily.toLowerCase();
     this.events.set(key, {
       browserFamily,
@@ -758,8 +776,46 @@ class BrowserEventCache {
       rootDomain: getRootDomain(normalizedUrl.hostname),
       displayName: getDomainDisplayName(normalizedUrl.hostname),
       path: normalizedUrl.pathname || '/',
-      receivedAt: Date.now()
+      receivedAt
     });
+
+    return this.events.get(key);
+  }
+
+  upsertHeartbeat(payload) {
+    return this.markExtensionSeen({
+      browserFamily: sanitizeText(payload.browserFamily, 'Chrome'),
+      extensionVersion: payload.extensionVersion,
+      sentAt: payload.sentAt,
+      receivedAt: Date.now(),
+      source: 'heartbeat'
+    });
+  }
+
+  markExtensionSeen({
+    browserFamily,
+    extensionVersion = '',
+    sentAt = 0,
+    receivedAt = Date.now(),
+    source = ''
+  }) {
+    const normalizedBrowserFamily = sanitizeText(browserFamily, 'Chrome');
+    if (!normalizedBrowserFamily) {
+      return null;
+    }
+
+    const key = normalizedBrowserFamily.toLowerCase();
+    const existing = this.extensionStates.get(key);
+    const normalizedSentAt = Number(sentAt) || receivedAt;
+    this.extensionStates.set(key, {
+      browserFamily: normalizedBrowserFamily,
+      extensionVersion: sanitizeText(extensionVersion, existing?.extensionVersion || ''),
+      lastSeenAt: Number(receivedAt) || Date.now(),
+      lastSentAt: normalizedSentAt,
+      source: sanitizeText(source, existing?.source || '')
+    });
+
+    return this.extensionStates.get(key);
   }
 
   getFresh(browserFamily) {
@@ -769,12 +825,46 @@ class BrowserEventCache {
       return null;
     }
 
-    if (Date.now() - event.receivedAt > BROWSER_EVENT_TTL_MS) {
+    if (Date.now() - event.receivedAt > this.eventTtlMs) {
       this.events.delete(key);
       return null;
     }
 
     return event;
+  }
+
+  getExtensionStatus() {
+    const now = Date.now();
+    const browsers = [...this.extensionStates.values()]
+      .map((entry) => ({
+        browserFamily: entry.browserFamily,
+        extensionVersion: entry.extensionVersion,
+        lastSeenAt: Number(entry.lastSeenAt) || 0,
+        lastSentAt: Number(entry.lastSentAt) || 0,
+        source: entry.source,
+        ageMs: Math.max(now - (Number(entry.lastSeenAt) || 0), 0),
+        isActive: now - (Number(entry.lastSeenAt) || 0) <= this.heartbeatTtlMs
+      }))
+      .sort((left, right) => {
+        if (right.lastSeenAt !== left.lastSeenAt) {
+          return right.lastSeenAt - left.lastSeenAt;
+        }
+
+        return left.browserFamily.localeCompare(right.browserFamily, 'en');
+      });
+
+    const activeBrowsers = browsers
+      .filter((entry) => entry.isActive)
+      .map((entry) => entry.browserFamily);
+
+    return {
+      status: activeBrowsers.length ? 'connected' : 'missing',
+      staleAfterMs: this.heartbeatTtlMs,
+      activeBrowsers,
+      seenBrowsers: browsers.map((entry) => entry.browserFamily),
+      latestHeartbeatAt: browsers[0]?.lastSeenAt || 0,
+      browsers
+    };
   }
 }
 
@@ -1726,7 +1816,10 @@ class UsageTracker {
         return;
       }
 
-      if (request.method !== 'POST' || request.url !== '/v1/browser-event') {
+      if (
+        request.method !== 'POST'
+        || ![BRIDGE_ENDPOINT_BROWSER_EVENT, BRIDGE_ENDPOINT_EXTENSION_HEARTBEAT].includes(request.url)
+      ) {
         writeJson(404, { ok: false });
         return;
       }
@@ -1782,8 +1875,18 @@ class UsageTracker {
         try {
           const body = Buffer.concat(chunks).toString('utf8');
           const payload = JSON.parse(body);
-          this.browserEvents.upsert(payload);
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            throw new Error('invalid bridge payload');
+          }
+
+          if (request.url === BRIDGE_ENDPOINT_EXTENSION_HEARTBEAT) {
+            this.browserEvents.upsertHeartbeat(payload);
+          } else {
+            this.browserEvents.upsert(payload);
+          }
+
           writeJson(200, { ok: true });
+          Promise.resolve(this.emitDataChanged()).catch(() => {});
         } catch {
           writeJson(400, { ok: false });
         }
@@ -2248,7 +2351,8 @@ class UsageTracker {
         latestDayKey,
         currentEntryKey: this.currentEntry ? this.currentEntry.key : null,
         currentPlaybackEntryKeys: [...this.currentPlaybackEntries.keys()],
-        bridgeUrl: `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}/v1/browser-event`
+        bridgeUrl: `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}${BRIDGE_ENDPOINT_BROWSER_EVENT}`,
+        browserExtensionStatus: this.browserEvents.getExtensionStatus()
       },
       daily: {
         availableDays: dayKeys,
@@ -2349,6 +2453,7 @@ module.exports = {
     buildPlaybackCandidateFromWasapi,
     fusePlaybackCandidates,
     clonePlaybackCandidateList,
-    HelperBackedPlaybackSessionFusionService
+    HelperBackedPlaybackSessionFusionService,
+    BrowserEventCache
   }
 };

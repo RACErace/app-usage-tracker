@@ -316,3 +316,76 @@ test('helper-backed fusion service returns cached helper snapshots', async () =>
   await service.dispose();
   assert.equal(sentMessages.some((message) => message?.type === 'shutdown'), true);
 });
+
+test('browser extension cache tracks heartbeat freshness separately from page events', () => {
+  const originalNow = Date.now;
+  let now = 1000;
+  Date.now = () => now;
+
+  try {
+    const cache = new __testables.BrowserEventCache({
+      eventTtlMs: 1000,
+      heartbeatTtlMs: 2000
+    });
+
+    cache.upsertHeartbeat({
+      browserFamily: 'Edge',
+      extensionVersion: '1.1.1',
+      sentAt: 900
+    });
+
+    cache.upsert({
+      browserFamily: 'Edge',
+      extensionVersion: '1.1.1',
+      pageTitle: 'OpenAI Docs',
+      url: 'https://platform.openai.com/docs'
+    });
+
+    assert.equal(cache.getFresh('Edge')?.host, 'platform.openai.com');
+
+    let status = cache.getExtensionStatus();
+    assert.equal(status.status, 'connected');
+    assert.deepEqual(status.activeBrowsers, ['Edge']);
+    assert.equal(status.browsers[0].extensionVersion, '1.1.1');
+
+    now = 2505;
+    assert.equal(cache.getFresh('Edge'), null);
+
+    status = cache.getExtensionStatus();
+    assert.equal(status.status, 'connected');
+    assert.equal(status.browsers[0].isActive, true);
+
+    now = 3105;
+    status = cache.getExtensionStatus();
+    assert.equal(status.status, 'missing');
+    assert.equal(status.browsers[0].isActive, false);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('snapshot meta exposes browser extension status for renderer prompts', () => {
+  const originalNow = Date.now;
+  let now = 5000;
+  Date.now = () => now;
+
+  try {
+    const tracker = new UsageTracker({
+      userDataPath: path.join(__dirname, '.tmp-tracker-snapshot'),
+      onDataChanged: null
+    });
+
+    tracker.browserEvents.upsertHeartbeat({
+      browserFamily: 'Chrome',
+      extensionVersion: '1.1.1',
+      sentAt: 4900
+    });
+
+    const snapshot = tracker.getSnapshot();
+    assert.equal(snapshot.meta.bridgeUrl, 'http://127.0.0.1:32123/v1/browser-event');
+    assert.equal(snapshot.meta.browserExtensionStatus.status, 'connected');
+    assert.deepEqual(snapshot.meta.browserExtensionStatus.activeBrowsers, ['Chrome']);
+  } finally {
+    Date.now = originalNow;
+  }
+});

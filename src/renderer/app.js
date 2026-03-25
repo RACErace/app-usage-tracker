@@ -24,6 +24,8 @@ const elements = {
   previousDay: document.getElementById('previous-day'),
   nextDay: document.getElementById('next-day'),
   dateLabel: document.getElementById('date-label'),
+  browserExtensionWarning: document.getElementById('browser-extension-warning'),
+  browserExtensionWarningText: document.getElementById('browser-extension-warning-text'),
   chartSectionTitle: document.getElementById('chart-section-title'),
   summaryDuration: document.getElementById('summary-duration'),
   summarySubtitle: document.getElementById('summary-subtitle'),
@@ -31,6 +33,9 @@ const elements = {
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
   settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
+  browserExtensionStatusDot: document.getElementById('browser-extension-status-dot'),
+  browserExtensionStatusText: document.getElementById('browser-extension-status-text'),
+  browserExtensionStatusDetail: document.getElementById('browser-extension-status-detail'),
   refreshButton: document.getElementById('refresh-button'),
   backButton: document.getElementById('back-button'),
   detailAvatar: document.getElementById('detail-avatar'),
@@ -383,6 +388,76 @@ function ensureSelectedDayKey() {
   }
 }
 
+function getBrowserExtensionStatus(snapshot = state.snapshot) {
+  return snapshot?.meta?.browserExtensionStatus || {
+    status: 'missing',
+    staleAfterMs: 0,
+    activeBrowsers: [],
+    seenBrowsers: [],
+    latestHeartbeatAt: 0,
+    browsers: []
+  };
+}
+
+function formatBrowserList(browserFamilies) {
+  const uniqueBrowsers = [...new Set((browserFamilies || []).filter(Boolean))];
+  return uniqueBrowsers.join(' / ');
+}
+
+function getBrowserExtensionMessages(status) {
+  const activeLabel = formatBrowserList(status.activeBrowsers);
+  const seenLabel = formatBrowserList(status.seenBrowsers);
+
+  if (status.status === 'connected' && activeLabel) {
+    return {
+      summary: `已检测到 ${activeLabel} 插件心跳`,
+      detail: '网页访问会按站点归因到具体域名。',
+      warning: ''
+    };
+  }
+
+  if (seenLabel) {
+    return {
+      summary: `暂未收到 ${seenLabel} 插件心跳`,
+      detail: '请检查浏览器扩展是否仍已启用；当前浏览器时长会先记到浏览器应用本身。',
+      warning: `最近检测到 ${seenLabel} 插件，但当前没有收到新的心跳。请检查扩展是否仍已启用，否则网页时长不会拆分到具体网站。`
+    };
+  }
+
+  return {
+    summary: '未检测到浏览器插件心跳',
+    detail: '若要识别网页站点，请安装并启用浏览器插件；未安装时浏览器时长只会记到浏览器应用。',
+    warning: '若要识别网页站点，请安装并启用浏览器插件；否则 Chrome、Edge 等浏览器时长只会记到浏览器应用，不会拆分到具体网站。'
+  };
+}
+
+function renderBrowserExtensionStatus(snapshot = state.snapshot) {
+  const status = getBrowserExtensionStatus(snapshot);
+  const messages = getBrowserExtensionMessages(status);
+  const isConnected = status.status === 'connected';
+
+  if (elements.browserExtensionWarning) {
+    elements.browserExtensionWarning.hidden = isConnected;
+  }
+
+  if (elements.browserExtensionWarningText) {
+    elements.browserExtensionWarningText.textContent = messages.warning;
+  }
+
+  if (elements.browserExtensionStatusDot) {
+    elements.browserExtensionStatusDot.classList.toggle('active', isConnected);
+    elements.browserExtensionStatusDot.classList.toggle('warning', !isConnected);
+  }
+
+  if (elements.browserExtensionStatusText) {
+    elements.browserExtensionStatusText.textContent = messages.summary;
+  }
+
+  if (elements.browserExtensionStatusDetail) {
+    elements.browserExtensionStatusDetail.textContent = messages.detail;
+  }
+}
+
 function getRankingSubtitle(item) {
   if (item.kind === 'service') {
     return item.subtitle || item.host || item.appName || '';
@@ -614,6 +689,7 @@ function showScreen(screen) {
 }
 
 function renderSettingsState() {
+  const snapshot = state.snapshot;
   const enabled = Boolean(state.settings?.autoLaunchEnabled);
   const closeAction = state.settings?.closeWindowAction || 'tray';
   const closeActionLabels = {
@@ -634,6 +710,11 @@ function renderSettingsState() {
     button.disabled = state.updatingCloseAction;
     button.setAttribute('aria-checked', isActive ? 'true' : 'false');
   });
+
+  elements.settingsBridgeUrlText.textContent = snapshot?.meta?.bridgeUrl
+    ? `本地 bridge 地址：${snapshot.meta.bridgeUrl}`
+    : '本地 bridge 地址读取中';
+  renderBrowserExtensionStatus(snapshot);
 }
 
 function renderItemVisibilitySettings() {
@@ -737,7 +818,6 @@ function renderOverview() {
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
   elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(weekly.averageMs, 'short');
   elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(weekly.totalMs)}`;
-  elements.settingsBridgeUrlText.textContent = snapshot.meta.bridgeUrl;
 
   renderRanking(rankingItems, totalMs);
   renderSettingsState();

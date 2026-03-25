@@ -9,6 +9,8 @@
   --accent: #f08a9f;
   --accent-soft: rgba(240, 138, 159, 0.18);
   --blue: #1a8dff;
+  --warning: #ffb24d;
+  --warning-soft: rgba(255, 178, 77, 0.16);
   --line: rgba(255, 255, 255, 0.06);
   --shadow: 0 24px 48px rgba(0, 0, 0, 0.36);
   --radius-xl: 28px;
@@ -204,6 +206,15 @@ button {
 
 .section-block {
   margin-top: 20px;
+}
+
+.overview-warning-card {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border-color: rgba(255, 178, 77, 0.24);
+  background:
+    linear-gradient(180deg, rgba(66, 44, 18, 0.98), rgba(29, 20, 10, 0.98)),
+    linear-gradient(180deg, rgba(34, 34, 42, 0.98), rgba(22, 22, 27, 0.98));
 }
 
 .section-title-row {
@@ -662,8 +673,31 @@ canvas {
   box-shadow: 0 0 0 6px rgba(57, 182, 255, 0.14);
 }
 
+.status-dot.warning {
+  background: var(--warning);
+  box-shadow: 0 0 0 6px var(--warning-soft);
+}
+
 .status-text {
   font-size: 14px;
+}
+
+.bridge-status-line {
+  margin-top: 12px;
+}
+
+.bridge-status-detail,
+.warning-banner-text {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.warning-banner-title {
+  color: var(--warning);
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .setting-check-list {
