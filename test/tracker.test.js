@@ -562,9 +562,114 @@ test('snapshot meta exposes browser extension status for renderer prompts', () =
     assert.equal(snapshot.meta.bridgeUrl, 'http://127.0.0.1:32123/v1/browser-event');
     assert.equal(snapshot.meta.browserExtensionStatus.status, 'connected');
     assert.deepEqual(snapshot.meta.browserExtensionStatus.activeBrowsers, ['Chrome']);
+    assert.equal(snapshot.meta.trackingState.isPaused, false);
   } finally {
     Date.now = originalNow;
   }
+});
+
+test('manual pause commits the live foreground entry and marks snapshot meta as paused', async () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-manual-pause'),
+    onDataChanged: null
+  });
+
+  const startedAt = new Date(2026, 2, 28, 9, 0, 0, 0).getTime();
+  const pausedAt = startedAt + 120000;
+  const entry = tracker.normalizeWindow({
+    title: 'Slack',
+    owner: {
+      name: 'Slack',
+      path: 'C:\\Users\\race2\\AppData\\Local\\slack\\slack.exe'
+    }
+  }, startedAt);
+  const entryKey = entry.key;
+  const playbackEntry = tracker.createPlaybackEntryFromSession({
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music',
+    title: '寄り道 (Detour)',
+    artist: 'とた',
+    albumTitle: 'Sebone'
+  }, startedAt);
+
+  tracker.currentEntry = entry;
+  tracker.currentEntry.lastSeenAt = startedAt;
+  tracker.currentPlaybackEntries = new Map([[playbackEntry.key, playbackEntry]]);
+  tracker.currentPlaybackEntries.get(playbackEntry.key).lastSeenAt = startedAt;
+
+  await tracker.setManualPaused(true, pausedAt);
+
+  const dayKey = __testables.getDayKey(new Date(startedAt));
+  const persistedEntry = tracker.data.days[dayKey].items[entryKey];
+  const persistedPlaybackEntry = tracker.data.days[dayKey].items[playbackEntry.key];
+  const snapshot = tracker.getSnapshot();
+
+  assert.equal(tracker.currentEntry, null);
+  assert.equal(tracker.currentPlaybackEntries.size, 0);
+  assert.equal(persistedEntry.totalMs, 120000);
+  assert.equal(persistedPlaybackEntry.totalMs, 120000);
+  assert.equal(snapshot.meta.currentEntryKey, null);
+  assert.equal(snapshot.meta.trackingState.isPaused, true);
+  assert.equal(snapshot.meta.trackingState.playbackPaused, true);
+  assert.equal(snapshot.meta.trackingState.manualPaused, true);
+  assert.deepEqual(snapshot.meta.trackingState.pauseReasons, ['manual']);
+});
+
+test('idle pause truncates the current foreground interval and keeps music playback running', () => {
+  let idleSeconds = 0;
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-idle-pause'),
+    onDataChanged: null,
+    trackingProtectionSettings: {
+      idleDetectionEnabled: true,
+      idleThresholdSeconds: 300,
+      pauseOnLockScreen: true
+    },
+    getSystemIdleTime: () => idleSeconds
+  });
+
+  const startedAt = new Date(2026, 2, 28, 10, 0, 0, 0).getTime();
+  const now = startedAt + 305000;
+  const entry = tracker.normalizeWindow({
+    title: 'Code Review',
+    owner: {
+      name: 'Code',
+      path: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+    }
+  }, startedAt);
+  const entryKey = entry.key;
+  const playbackEntry = tracker.createPlaybackEntryFromSession({
+    sourceAppUserModelId: 'QQMusic.exe',
+    playbackStatus: 'Playing',
+    playbackType: 'Music',
+    title: '寄り道 (Detour)',
+    artist: 'とた',
+    albumTitle: 'Sebone'
+  }, startedAt);
+
+  tracker.currentEntry = entry;
+  tracker.currentEntry.lastSeenAt = startedAt;
+  tracker.currentPlaybackEntries = new Map([[playbackEntry.key, playbackEntry]]);
+  tracker.currentPlaybackEntries.get(playbackEntry.key).lastSeenAt = startedAt;
+  idleSeconds = 305;
+
+  tracker.syncIdlePauseState(now);
+  tracker.commitPlaybackEntries(now);
+
+  const dayKey = __testables.getDayKey(new Date(startedAt));
+  const persistedEntry = tracker.data.days[dayKey].items[entryKey];
+  const persistedPlaybackEntry = tracker.data.days[dayKey].items[playbackEntry.key];
+  const snapshot = tracker.getSnapshot();
+
+  assert.equal(tracker.currentEntry, null);
+  assert.equal(tracker.currentPlaybackEntries.size, 1);
+  assert.equal(persistedEntry.totalMs, 300000);
+  assert.equal(persistedPlaybackEntry.totalMs, 305000);
+  assert.equal(snapshot.meta.trackingState.foregroundPaused, true);
+  assert.equal(snapshot.meta.trackingState.playbackPaused, false);
+  assert.equal(snapshot.meta.trackingState.idlePaused, true);
+  assert.deepEqual(snapshot.meta.trackingState.pauseReasons, ['idle']);
 });
 
 test('usage tracker restores from backup when primary file is structurally invalid', async () => {

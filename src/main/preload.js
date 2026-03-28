@@ -11,9 +11,11 @@ contextBridge.exposeInMainWorld('usageApi', {
   setAutoBackupSettings: (settings) => ipcRenderer.invoke('settings:set-auto-backup', settings),
   setCloseWindowAction: (closeWindowAction) => ipcRenderer.invoke('settings:set-close-window-action', closeWindowAction),
   setThemePreference: (themePreference) => ipcRenderer.invoke('settings:set-theme-preference', themePreference),
+  setTrackingProtectionSettings: (settings) => ipcRenderer.invoke('settings:set-tracking-protection', settings),
   setCustomServiceRules: (customServiceRules) => ipcRenderer.invoke('settings:set-custom-service-rules', customServiceRules),
   setCategoryRules: (categoryRules) => ipcRenderer.invoke('settings:set-category-rules', categoryRules),
   setHiddenItemKeys: (hiddenItemKeys) => ipcRenderer.invoke('settings:set-hidden-item-keys', hiddenItemKeys),
+  setManualPause: (isPaused) => ipcRenderer.invoke('tracking:set-manual-pause', isPaused),
   forcePoll: () => ipcRenderer.invoke('usage:force-poll'),
   onDataChanged: (listener) => {
     const wrapped = (_event, payload) => listener(payload);

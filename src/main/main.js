@@ -1,5 +1,5 @@
 const fs = require('fs/promises');
-const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage, powerMonitor } = require('electron');
 const path = require('path');
 const {
   cloneRuleList,
@@ -27,6 +27,9 @@ const THEME_PREFERENCE_DARK = 'dark';
 const THEME_PREFERENCE_SYSTEM = 'system';
 const AUTO_BACKUP_DIR_NAME = 'backups';
 const AUTO_BACKUP_MAX_TIMER_DELAY_MS = 2147483647;
+const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
+const MIN_IDLE_THRESHOLD_SECONDS = 60;
+const MAX_IDLE_THRESHOLD_SECONDS = 12 * 60 * 60;
 const BACKUP_FILE_FILTERS = [
   { name: 'JSON 文件', extensions: ['json'] }
 ];
@@ -34,6 +37,9 @@ const DEFAULT_APP_SETTINGS = Object.freeze({
   hiddenItemKeys: [],
   closeWindowAction: CLOSE_ACTION_TRAY,
   themePreference: THEME_PREFERENCE_SYSTEM,
+  idleDetectionEnabled: true,
+  idleThresholdSeconds: DEFAULT_IDLE_THRESHOLD_SECONDS,
+  pauseOnLockScreen: true,
   autoBackupEnabled: false,
   autoBackupIntervalMinutes: DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
   lastAutoBackupAt: '',
@@ -123,12 +129,20 @@ function normalizeThemePreference(value) {
   return THEME_PREFERENCE_SYSTEM;
 }
 
+function normalizeIdleThresholdSeconds(value) {
+  const numericValue = Math.round(Number(value) || DEFAULT_IDLE_THRESHOLD_SECONDS);
+  return Math.min(Math.max(numericValue, MIN_IDLE_THRESHOLD_SECONDS), MAX_IDLE_THRESHOLD_SECONDS);
+}
+
 function normalizeImportedBackupSettings(value) {
   return {
     autoLaunchEnabled: Boolean(value?.autoLaunchEnabled),
     hiddenItemKeys: normalizeHiddenItemKeys(value?.hiddenItemKeys),
     closeWindowAction: normalizeCloseWindowAction(value?.closeWindowAction),
     themePreference: normalizeThemePreference(value?.themePreference),
+    idleDetectionEnabled: value?.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(value?.idleThresholdSeconds),
+    pauseOnLockScreen: value?.pauseOnLockScreen !== false,
     autoBackupEnabled: Boolean(value?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(value?.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof value?.lastAutoBackupAt === 'string' ? value.lastAutoBackupAt.trim() : '',
@@ -141,6 +155,14 @@ function getTrackerRuleSettings() {
   return {
     customServiceRules: cloneRuleList(appSettings.customServiceRules),
     categoryRules: cloneRuleList(appSettings.categoryRules)
+  };
+}
+
+function getTrackerTrackingProtectionSettings() {
+  return {
+    idleDetectionEnabled: appSettings.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(appSettings.idleThresholdSeconds),
+    pauseOnLockScreen: appSettings.pauseOnLockScreen !== false
   };
 }
 
@@ -164,6 +186,9 @@ function getStoredSettingsPayload() {
     hiddenItemKeys: [...appSettings.hiddenItemKeys],
     closeWindowAction: appSettings.closeWindowAction,
     themePreference: normalizeThemePreference(appSettings.themePreference),
+    idleDetectionEnabled: appSettings.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(appSettings.idleThresholdSeconds),
+    pauseOnLockScreen: appSettings.pauseOnLockScreen !== false,
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : '',
@@ -182,6 +207,43 @@ function getSettingsPayload() {
   };
 }
 
+function formatIdleThresholdLabel(seconds) {
+  const thresholdSeconds = normalizeIdleThresholdSeconds(seconds);
+  const minutes = Math.round(thresholdSeconds / 60);
+
+  if (minutes % 60 === 0) {
+    return `${minutes / 60} 小时`;
+  }
+
+  return `${minutes} 分钟`;
+}
+
+function getTrackingStatusLabel(trackingState) {
+  if (!trackingState?.foregroundPaused && !trackingState?.playbackPaused) {
+    return '统计进行中';
+  }
+
+  const fullPauseReasons = [];
+  if (trackingState?.manualPaused) {
+    fullPauseReasons.push('手动暂停');
+  }
+  if (trackingState?.lockScreenPaused) {
+    fullPauseReasons.push('锁屏暂停');
+  }
+
+  if (trackingState?.playbackPaused) {
+    return fullPauseReasons.length
+      ? `统计已暂停：${fullPauseReasons.join(' / ')}`
+      : '统计已暂停';
+  }
+
+  if (trackingState?.idlePaused) {
+    return `前台统计已暂停：空闲超过 ${formatIdleThresholdLabel(trackingState.idleThresholdSeconds)}`;
+  }
+
+  return '前台统计已暂停';
+}
+
 async function loadAppSettings() {
   const loaded = await loadJsonFileWithRecovery(getSettingsFilePath(), {
     validate: isPlainObject,
@@ -192,6 +254,9 @@ async function loadAppSettings() {
     hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
     closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction),
     themePreference: normalizeThemePreference(parsed?.themePreference),
+    idleDetectionEnabled: parsed?.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(parsed?.idleThresholdSeconds),
+    pauseOnLockScreen: parsed?.pauseOnLockScreen !== false,
     autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : '',
@@ -223,6 +288,9 @@ async function saveAppSettings() {
     hiddenItemKeys: [...appSettings.hiddenItemKeys],
     closeWindowAction: appSettings.closeWindowAction,
     themePreference: normalizeThemePreference(appSettings.themePreference),
+    idleDetectionEnabled: appSettings.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(appSettings.idleThresholdSeconds),
+    pauseOnLockScreen: appSettings.pauseOnLockScreen !== false,
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : '',
@@ -269,6 +337,17 @@ async function writeCloseWindowAction(closeWindowAction) {
 async function writeThemePreference(themePreference) {
   appSettings.themePreference = normalizeThemePreference(themePreference);
   await saveAppSettings();
+  notifySettingsChanged();
+}
+
+async function writeTrackingProtectionSettings({ idleDetectionEnabled, idleThresholdSeconds, pauseOnLockScreen }) {
+  appSettings.idleDetectionEnabled = idleDetectionEnabled !== false;
+  appSettings.idleThresholdSeconds = normalizeIdleThresholdSeconds(idleThresholdSeconds);
+  appSettings.pauseOnLockScreen = pauseOnLockScreen !== false;
+  await saveAppSettings();
+  if (usageTracker) {
+    await usageTracker.updateTrackingProtectionSettings(getTrackerTrackingProtectionSettings());
+  }
   notifySettingsChanged();
 }
 
@@ -438,6 +517,9 @@ async function applyImportedBackupSettings(restoredSettings) {
     hiddenItemKeys: normalized.hiddenItemKeys,
     closeWindowAction: normalized.closeWindowAction,
     themePreference: normalized.themePreference,
+    idleDetectionEnabled: normalized.idleDetectionEnabled,
+    idleThresholdSeconds: normalized.idleThresholdSeconds,
+    pauseOnLockScreen: normalized.pauseOnLockScreen,
     autoBackupEnabled: normalized.autoBackupEnabled,
     autoBackupIntervalMinutes: normalized.autoBackupIntervalMinutes,
     lastAutoBackupAt: normalized.lastAutoBackupAt,
@@ -449,6 +531,7 @@ async function applyImportedBackupSettings(restoredSettings) {
   writeAutoLaunchState(normalized.autoLaunchEnabled);
   if (usageTracker) {
     await usageTracker.updateRuleSettings(getTrackerRuleSettings());
+    await usageTracker.updateTrackingProtectionSettings(getTrackerTrackingProtectionSettings());
   }
   scheduleAutoBackup();
   notifySettingsChanged();
@@ -651,6 +734,8 @@ function updateTrayMenu() {
     return;
   }
 
+  const trackingState = usageTracker ? usageTracker.getTrackingState() : null;
+  const trackingStatusLabel = getTrackingStatusLabel(trackingState);
   const menu = Menu.buildFromTemplate([
     {
       label: mainWindow && mainWindow.isVisible() ? '隐藏主窗口' : '显示主窗口',
@@ -662,6 +747,27 @@ function updateTrayMenu() {
         }
       }
     },
+    {
+      label: trackingStatusLabel,
+      enabled: false
+    },
+    {
+      label: '手动暂停统计',
+      type: 'checkbox',
+      checked: Boolean(trackingState?.manualPaused),
+      click: (menuItem) => {
+        if (!usageTracker) {
+          return;
+        }
+
+        usageTracker.setManualPaused(menuItem.checked)
+          .then(() => {
+            updateTrayMenu();
+          })
+          .catch(() => {});
+      }
+    },
+    { type: 'separator' },
     {
       label: '开机自启动',
       type: 'checkbox',
@@ -685,7 +791,38 @@ function updateTrayMenu() {
     }
   ]);
 
+  tray.setToolTip(
+    trackingState?.playbackPaused
+      ? '使用统计（已暂停）'
+      : (trackingState?.foregroundPaused ? '使用统计（前台暂停）' : '使用统计')
+  );
   tray.setContextMenu(menu);
+}
+
+function registerPowerMonitorEvents() {
+  powerMonitor.on('lock-screen', () => {
+    if (!usageTracker) {
+      return;
+    }
+
+    usageTracker.setScreenLocked(true)
+      .then(() => {
+        updateTrayMenu();
+      })
+      .catch(() => {});
+  });
+
+  powerMonitor.on('unlock-screen', () => {
+    if (!usageTracker) {
+      return;
+    }
+
+    usageTracker.setScreenLocked(false)
+      .then(() => {
+        updateTrayMenu();
+      })
+      .catch(() => {});
+  });
 }
 
 function createTray() {
@@ -775,13 +912,17 @@ async function bootstrap() {
   usageTracker = new UsageTracker({
     userDataPath: app.getPath('userData'),
     ruleSettings: getTrackerRuleSettings(),
+    trackingProtectionSettings: getTrackerTrackingProtectionSettings(),
+    getSystemIdleTime: () => powerMonitor.getSystemIdleTime(),
     onDataChanged: async () => {
+      updateTrayMenu();
       pushUsageSnapshot();
     }
   });
 
   await usageTracker.init();
   scheduleAutoBackup();
+  registerPowerMonitorEvents();
   createTray();
   createWindow();
 }
@@ -846,6 +987,11 @@ ipcMain.handle('settings:set-theme-preference', async (_event, themePreference) 
   return getSettingsPayload();
 });
 
+ipcMain.handle('settings:set-tracking-protection', async (_event, trackingProtectionSettings) => {
+  await writeTrackingProtectionSettings(trackingProtectionSettings || {});
+  return getSettingsPayload();
+});
+
 ipcMain.handle('settings:set-custom-service-rules', async (_event, customServiceRules) => {
   await writeCustomServiceRules(customServiceRules);
   return getSettingsPayload();
@@ -875,6 +1021,16 @@ ipcMain.handle('usage:force-poll', async () => {
   }
 
   await usageTracker.pollActiveWindow();
+  return usageTracker.getSnapshot();
+});
+
+ipcMain.handle('tracking:set-manual-pause', async (_event, isPaused) => {
+  if (!usageTracker) {
+    return null;
+  }
+
+  await usageTracker.setManualPaused(Boolean(isPaused));
+  updateTrayMenu();
   return usageTracker.getSnapshot();
 });
 

@@ -28,6 +28,8 @@ const state = {
   updatingHiddenItems: false,
   updatingCloseAction: false,
   updatingThemePreference: false,
+  updatingTrackingProtection: false,
+  updatingManualPause: false,
   updatingAutoBackup: false,
   updatingServiceRules: false,
   updatingCategoryRules: false,
@@ -50,6 +52,9 @@ const elements = {
   previousDay: document.getElementById('previous-day'),
   nextDay: document.getElementById('next-day'),
   dateLabel: document.getElementById('date-label'),
+  trackingPauseWarning: document.getElementById('tracking-pause-warning'),
+  trackingPauseWarningTitle: document.getElementById('tracking-pause-warning-title'),
+  trackingPauseWarningText: document.getElementById('tracking-pause-warning-text'),
   browserExtensionWarning: document.getElementById('browser-extension-warning'),
   browserExtensionWarningText: document.getElementById('browser-extension-warning-text'),
   overviewSummaryKicker: document.getElementById('overview-summary-kicker'),
@@ -87,6 +92,19 @@ const elements = {
   autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   autoLaunchSwitch: document.getElementById('auto-launch-switch'),
   autoLaunchDot: document.getElementById('auto-launch-dot'),
+  manualPauseStatus: document.getElementById('manual-pause-status'),
+  manualPauseToggle: document.getElementById('manual-pause-toggle'),
+  manualPauseSwitch: document.getElementById('manual-pause-switch'),
+  manualPauseDot: document.getElementById('manual-pause-dot'),
+  idleDetectionToggle: document.getElementById('idle-detection-toggle'),
+  idleDetectionSwitch: document.getElementById('idle-detection-switch'),
+  idleDetectionDot: document.getElementById('idle-detection-dot'),
+  idleDetectionStatus: document.getElementById('idle-detection-status'),
+  idleThresholdValue: document.getElementById('idle-threshold-value'),
+  lockScreenPauseStatus: document.getElementById('lock-screen-pause-status'),
+  lockScreenPauseToggle: document.getElementById('lock-screen-pause-toggle'),
+  lockScreenPauseSwitch: document.getElementById('lock-screen-pause-switch'),
+  lockScreenPauseDot: document.getElementById('lock-screen-pause-dot'),
   autoBackupToggle: document.getElementById('auto-backup-toggle'),
   autoBackupSwitch: document.getElementById('auto-backup-switch'),
   autoBackupDot: document.getElementById('auto-backup-dot'),
@@ -641,6 +659,89 @@ function getBrowserExtensionStatus(snapshot = state.snapshot) {
   };
 }
 
+function getTrackingState(snapshot = state.snapshot) {
+  const idleDetectionEnabled = state.settings?.idleDetectionEnabled !== false;
+  const idleThresholdSeconds = clamp(Math.round(Number(state.settings?.idleThresholdSeconds) || 300), 60, 12 * 60 * 60);
+  const pauseOnLockScreen = state.settings?.pauseOnLockScreen !== false;
+  return snapshot?.meta?.trackingState || {
+    isPaused: false,
+    pausedAt: 0,
+    pauseReasons: [],
+    foregroundPaused: false,
+    foregroundPausedAt: 0,
+    foregroundPauseReasons: [],
+    playbackPaused: false,
+    playbackPausedAt: 0,
+    playbackPauseReasons: [],
+    manualPaused: false,
+    manualPausedAt: 0,
+    screenLocked: false,
+    screenLockedAt: 0,
+    pauseOnLockScreen,
+    lockScreenPaused: false,
+    idleDetectionEnabled,
+    idleDetectionAvailable: true,
+    idleThresholdSeconds,
+    idleSeconds: 0,
+    idlePaused: false,
+    idlePausedAt: 0
+  };
+}
+
+function formatIdleThreshold(seconds) {
+  return formatDuration((Number(seconds) || 0) * 1000, 'short');
+}
+
+function getTrackingPauseReasonLabels(trackingState = getTrackingState(), reasons = trackingState.pauseReasons) {
+  const labels = [];
+  const reasonSet = new Set(Array.isArray(reasons) ? reasons : []);
+
+  if (reasonSet.has('manual') || trackingState.manualPaused) {
+    labels.push('手动暂停');
+  }
+  if (reasonSet.has('lock-screen') || trackingState.lockScreenPaused) {
+    labels.push('Windows 已锁屏');
+  }
+  if (reasonSet.has('idle') || trackingState.idlePaused) {
+    labels.push(`连续 ${formatIdleThreshold(trackingState.idleThresholdSeconds)} 没有键盘或鼠标输入`);
+  }
+
+  return labels;
+}
+
+function getTrackingStatusMessage(trackingState = getTrackingState()) {
+  if (trackingState.playbackPaused) {
+    const reasonLabels = getTrackingPauseReasonLabels(trackingState, trackingState.playbackPauseReasons);
+    return {
+      title: '统计已暂停',
+      detail: `${reasonLabels.join('，')}，当前不会累计前台窗口、网页和音乐播放时长。`
+    };
+  }
+
+  if (trackingState.foregroundPaused) {
+    const reasonLabels = getTrackingPauseReasonLabels(trackingState, trackingState.foregroundPauseReasons);
+    return {
+      title: '前台统计已暂停',
+      detail: `${reasonLabels.join('，')}，当前不累计前台窗口和网页；音乐播放仍会继续统计。`
+    };
+  }
+
+  const details = [];
+  if (state.settings?.idleDetectionEnabled !== false) {
+    details.push(`连续 ${formatIdleThreshold(state.settings?.idleThresholdSeconds || 300)} 没有键盘或鼠标输入后，会暂停前台窗口和网页统计`);
+  }
+  if (state.settings?.pauseOnLockScreen !== false) {
+    details.push('Windows 锁屏时会暂停全部统计');
+  }
+
+  return {
+    title: '统计进行中',
+    detail: details.length
+      ? `当前正在采集使用数据，${details.join('，')}。`
+      : '当前正在采集使用数据；如需临时停表，可以使用手动暂停。'
+  };
+}
+
 function formatBrowserList(browserFamilies) {
   const uniqueBrowsers = [...new Set((browserFamilies || []).filter(Boolean))];
   return uniqueBrowsers.join(' / ');
@@ -697,6 +798,24 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
 
   if (elements.browserExtensionStatusDetail) {
     elements.browserExtensionStatusDetail.textContent = messages.detail;
+  }
+}
+
+function renderTrackingPauseWarning(snapshot = state.snapshot) {
+  if (!elements.trackingPauseWarning) {
+    return;
+  }
+
+  const trackingState = getTrackingState(snapshot);
+  const statusMessage = getTrackingStatusMessage(trackingState);
+  elements.trackingPauseWarning.hidden = !trackingState.isPaused;
+
+  if (elements.trackingPauseWarningTitle) {
+    elements.trackingPauseWarningTitle.textContent = statusMessage.title;
+  }
+
+  if (elements.trackingPauseWarningText) {
+    elements.trackingPauseWarningText.textContent = statusMessage.detail;
   }
 }
 
@@ -950,7 +1069,12 @@ function showScreen(screen) {
 
 function renderSettingsState() {
   const snapshot = state.snapshot;
+  const trackingState = getTrackingState(snapshot);
+  const trackingStatusMessage = getTrackingStatusMessage(trackingState);
   const enabled = Boolean(state.settings?.autoLaunchEnabled);
+  const idleDetectionEnabled = state.settings?.idleDetectionEnabled !== false;
+  const idleThresholdSeconds = clamp(Math.round(Number(state.settings?.idleThresholdSeconds) || 300), 60, 12 * 60 * 60);
+  const pauseOnLockScreen = state.settings?.pauseOnLockScreen !== false;
   const autoBackupEnabled = Boolean(state.settings?.autoBackupEnabled);
   const autoBackupIntervalMinutes = Number(state.settings?.autoBackupIntervalMinutes) || 1440;
   const autoBackupParts = getAutoBackupIntervalParts(autoBackupIntervalMinutes);
@@ -985,6 +1109,47 @@ function renderSettingsState() {
   elements.autoLaunchDot.classList.toggle('active', enabled);
   elements.autoLaunchStatus.textContent = enabled ? '已开启开机自启动' : '未开启开机自启动';
   elements.autoLaunchToggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+
+  elements.manualPauseSwitch.classList.toggle('active', Boolean(trackingState.manualPaused));
+  elements.manualPauseDot.classList.toggle('active', Boolean(trackingState.manualPaused));
+  elements.manualPauseDot.classList.toggle('warning', Boolean(trackingState.isPaused && !trackingState.manualPaused));
+  elements.manualPauseStatus.textContent = trackingState.manualPaused
+    ? '已手动暂停统计'
+    : (trackingState.isPaused ? trackingStatusMessage.detail : '当前未手动暂停');
+  elements.manualPauseToggle.setAttribute('aria-checked', trackingState.manualPaused ? 'true' : 'false');
+  elements.manualPauseToggle.disabled = state.updatingManualPause;
+
+  elements.idleDetectionSwitch.classList.toggle('active', idleDetectionEnabled);
+  elements.idleDetectionDot.classList.toggle('active', idleDetectionEnabled && !trackingState.idlePaused);
+  elements.idleDetectionDot.classList.toggle('warning', Boolean(trackingState.idlePaused));
+  elements.idleDetectionToggle.setAttribute('aria-checked', idleDetectionEnabled ? 'true' : 'false');
+  elements.idleDetectionToggle.disabled = state.updatingTrackingProtection;
+  elements.idleThresholdValue.value = String(Math.max(Math.round(idleThresholdSeconds / 60), 1));
+  elements.idleThresholdValue.disabled = state.updatingTrackingProtection || !idleDetectionEnabled;
+
+  if (!idleDetectionEnabled) {
+    elements.idleDetectionStatus.textContent = '空闲检测已关闭';
+  } else if (!trackingState.idleDetectionAvailable) {
+    elements.idleDetectionStatus.textContent = '当前环境暂时不可用空闲检测';
+  } else if (trackingState.idlePaused) {
+    elements.idleDetectionStatus.textContent = `连续 ${formatIdleThreshold(idleThresholdSeconds)} 没有键盘或鼠标输入，当前暂停前台窗口和网页；音乐播放仍继续统计`;
+  } else {
+    elements.idleDetectionStatus.textContent = `连续 ${formatIdleThreshold(idleThresholdSeconds)} 没有键盘或鼠标输入后，自动暂停前台窗口和网页`;
+  }
+
+  elements.lockScreenPauseSwitch.classList.toggle('active', pauseOnLockScreen);
+  elements.lockScreenPauseDot.classList.toggle('active', pauseOnLockScreen && !trackingState.lockScreenPaused);
+  elements.lockScreenPauseDot.classList.toggle('warning', Boolean(trackingState.lockScreenPaused));
+  elements.lockScreenPauseToggle.setAttribute('aria-checked', pauseOnLockScreen ? 'true' : 'false');
+  elements.lockScreenPauseToggle.disabled = state.updatingTrackingProtection;
+
+  if (!pauseOnLockScreen) {
+    elements.lockScreenPauseStatus.textContent = '锁屏暂停已关闭';
+  } else if (trackingState.lockScreenPaused) {
+    elements.lockScreenPauseStatus.textContent = 'Windows 当前已锁屏，前台窗口、网页和音乐播放都已暂停统计';
+  } else {
+    elements.lockScreenPauseStatus.textContent = 'Windows 锁屏时会暂停前台窗口、网页和音乐播放';
+  }
 
   elements.autoBackupSwitch.classList.toggle('active', autoBackupEnabled);
   elements.autoBackupDot.classList.toggle('active', autoBackupEnabled && !autoBackupError);
@@ -1370,12 +1535,18 @@ function renderOverviewSummary(activeDay, weekly, rankingItems) {
   const isDaily = state.selectedRange === 'daily';
   const browserMessages = getBrowserExtensionMessages(getBrowserExtensionStatus());
   const highlightValue = isDaily ? activeDay.totalMs : weekly.averageMs;
+  const trackingState = getTrackingState();
+  const caption = isDaily
+    ? `当前查看：${formatDayLabel(state.selectedDayKey)}`
+    : `近 7 天总时长 ${formatDuration(weekly.totalMs)}`;
 
   elements.overviewSummaryKicker.textContent = isDaily ? '今日统计' : '近 7 天日均';
   elements.overviewSummaryValue.textContent = formatDuration(highlightValue);
-  elements.overviewSummaryCaption.textContent = isDaily
-    ? `当前查看：${formatDayLabel(state.selectedDayKey)}`
-    : `近 7 天总时长 ${formatDuration(weekly.totalMs)}`;
+  elements.overviewSummaryCaption.textContent = trackingState.playbackPaused
+    ? `${caption} · 统计已暂停`
+    : (trackingState.foregroundPaused
+      ? `${caption} · 前台统计已暂停`
+      : caption);
   elements.overviewVisibleCount.textContent = `${visibleCount} 项`;
   elements.overviewVisibleCaption.textContent = allKnownItems.length
     ? `当前排行展示 ${Math.min(rankingItems.length, visibleCount)} 项，已隐藏 ${hiddenCount} 项`
@@ -1442,6 +1613,7 @@ function renderOverview() {
     : '等待采集数据';
 
   renderOverviewSummary(activeDay, weekly, rankingItems);
+  renderTrackingPauseWarning(snapshot);
   renderRanking(rankingItems, totalMs);
   renderSettingsState();
 
@@ -1762,6 +1934,77 @@ async function handleBackupImport() {
   }
 
   renderSettingsScreen();
+}
+
+async function updateTrackingProtectionSettings(partialSettings = {}) {
+  if (state.updatingTrackingProtection) {
+    return;
+  }
+
+  const previousSettings = state.settings || {
+    idleDetectionEnabled: true,
+    idleThresholdSeconds: 300,
+    pauseOnLockScreen: true
+  };
+  const nextSettings = {
+    idleDetectionEnabled: Object.prototype.hasOwnProperty.call(partialSettings, 'idleDetectionEnabled')
+      ? Boolean(partialSettings.idleDetectionEnabled)
+      : previousSettings.idleDetectionEnabled !== false,
+    idleThresholdSeconds: Object.prototype.hasOwnProperty.call(partialSettings, 'idleThresholdSeconds')
+      ? clamp(Math.round(Number(partialSettings.idleThresholdSeconds) || 300), 60, 12 * 60 * 60)
+      : clamp(Math.round(Number(previousSettings.idleThresholdSeconds) || 300), 60, 12 * 60 * 60),
+    pauseOnLockScreen: Object.prototype.hasOwnProperty.call(partialSettings, 'pauseOnLockScreen')
+      ? Boolean(partialSettings.pauseOnLockScreen)
+      : previousSettings.pauseOnLockScreen !== false
+  };
+
+  state.updatingTrackingProtection = true;
+  state.settings = {
+    ...previousSettings,
+    ...nextSettings
+  };
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setTrackingProtectionSettings(nextSettings);
+  } catch (error) {
+    state.settings = previousSettings;
+    renderSettingsScreen();
+    throw error;
+  } finally {
+    state.updatingTrackingProtection = false;
+  }
+
+  renderSettingsScreen();
+}
+
+async function updateManualPause(isPaused) {
+  if (state.updatingManualPause) {
+    return;
+  }
+
+  state.updatingManualPause = true;
+  renderSettingsScreen();
+
+  try {
+    const snapshot = await window.usageApi.setManualPause(Boolean(isPaused));
+    if (snapshot) {
+      state.snapshot = snapshot;
+      ensureSelectedDayKey();
+    }
+  } finally {
+    state.updatingManualPause = false;
+  }
+
+  renderCurrentScreen();
+}
+
+function commitIdleThreshold() {
+  const minutes = clamp(Math.round(Number(elements.idleThresholdValue.value) || 5), 1, 12 * 60);
+  elements.idleThresholdValue.value = String(minutes);
+  updateTrackingProtectionSettings({
+    idleThresholdSeconds: minutes * 60
+  }).catch(() => {});
 }
 
 async function updateAutoBackupSettings(partialSettings = {}) {
@@ -2085,6 +2328,26 @@ function bindEvents() {
     } finally {
       elements.autoLaunchToggle.disabled = false;
     }
+  });
+
+  elements.manualPauseToggle.addEventListener('click', () => {
+    const trackingState = getTrackingState();
+    updateManualPause(!trackingState.manualPaused).catch(() => {});
+  });
+
+  elements.idleDetectionToggle.addEventListener('click', () => {
+    updateTrackingProtectionSettings({
+      idleDetectionEnabled: !(state.settings?.idleDetectionEnabled !== false)
+    }).catch(() => {});
+  });
+
+  elements.idleThresholdValue.addEventListener('change', commitIdleThreshold);
+  elements.idleThresholdValue.addEventListener('blur', commitIdleThreshold);
+
+  elements.lockScreenPauseToggle.addEventListener('click', () => {
+    updateTrackingProtectionSettings({
+      pauseOnLockScreen: !(state.settings?.pauseOnLockScreen !== false)
+    }).catch(() => {});
   });
 
   elements.autoBackupToggle.addEventListener('click', () => {

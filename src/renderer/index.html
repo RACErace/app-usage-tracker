@@ -30,6 +30,11 @@
             <button class="pill-button" type="button" id="next-day">›</button>
           </section>
 
+          <article class="card overview-warning-card" id="tracking-pause-warning" hidden>
+            <div class="warning-banner-title" id="tracking-pause-warning-title">统计已暂停</div>
+            <p class="warning-banner-text" id="tracking-pause-warning-text"></p>
+          </article>
+
           <article class="card overview-warning-card" id="browser-extension-warning" hidden>
             <div class="warning-banner-title">浏览器插件未连接</div>
             <p class="warning-banner-text" id="browser-extension-warning-text"></p>
@@ -176,6 +181,66 @@
                 <div class="setting-status-line">
                   <span class="status-dot" id="auto-launch-dot"></span>
                   <span class="status-text" id="auto-launch-status">读取中</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <button class="setting-row" type="button" id="manual-pause-toggle" aria-label="切换手动暂停">
+                  <div class="setting-copy">
+                    <span class="setting-name">手动暂停统计</span>
+                    <span class="setting-text">暂停后不会累计前台窗口、网页和音乐播放时长，直到你手动恢复。</span>
+                  </div>
+                  <span class="toggle-switch" id="manual-pause-switch" aria-hidden="true">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </button>
+
+                <div class="setting-status-line">
+                  <span class="status-dot" id="manual-pause-dot"></span>
+                  <span class="status-text" id="manual-pause-status">读取中</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <button class="setting-row" type="button" id="idle-detection-toggle" aria-label="切换空闲检测">
+                  <div class="setting-copy">
+                    <span class="setting-name">空闲检测</span>
+                    <span class="setting-text">连续一段时间没有键盘或鼠标输入时，自动暂停前台窗口和网页统计；音乐播放会继续累计。</span>
+                  </div>
+                  <span class="toggle-switch" id="idle-detection-switch" aria-hidden="true">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </button>
+
+                <div class="settings-inline-form">
+                  <label class="settings-field" for="idle-threshold-value">
+                    <span class="settings-field-label">空闲阈值（分钟）</span>
+                    <div class="settings-frequency-controls">
+                      <input class="settings-number-input" id="idle-threshold-value" type="number" min="1" step="1" value="5" />
+                    </div>
+                  </label>
+                </div>
+
+                <div class="setting-status-line">
+                  <span class="status-dot" id="idle-detection-dot"></span>
+                  <span class="status-text" id="idle-detection-status">读取中</span>
+                </div>
+              </article>
+
+              <article class="card settings-panel">
+                <button class="setting-row" type="button" id="lock-screen-pause-toggle" aria-label="切换锁屏暂停">
+                  <div class="setting-copy">
+                    <span class="setting-name">锁屏暂停</span>
+                    <span class="setting-text">Windows 锁屏后立即暂停前台窗口、网页和音乐播放统计，解锁后再恢复采集。</span>
+                  </div>
+                  <span class="toggle-switch" id="lock-screen-pause-switch" aria-hidden="true">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </button>
+
+                <div class="setting-status-line">
+                  <span class="status-dot" id="lock-screen-pause-dot"></span>
+                  <span class="status-text" id="lock-screen-pause-status">读取中</span>
                 </div>
               </article>
 

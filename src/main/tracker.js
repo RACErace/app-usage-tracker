@@ -14,6 +14,9 @@ const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = requi
 const DATA_VERSION = 4;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
+const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
+const MIN_IDLE_THRESHOLD_SECONDS = 60;
+const MAX_IDLE_THRESHOLD_SECONDS = 12 * 60 * 60;
 const BROWSER_EVENT_TTL_MS = 65000;
 const BROWSER_EXTENSION_HEARTBEAT_TTL_MS = 125000;
 const MAX_BRIDGE_REQUEST_BYTES = 16 * 1024;
@@ -1001,6 +1004,35 @@ class BrowserEventCache {
   }
 }
 
+function normalizeIdleThresholdSeconds(value) {
+  const numericValue = Math.round(Number(value) || DEFAULT_IDLE_THRESHOLD_SECONDS);
+  return Math.min(Math.max(numericValue, MIN_IDLE_THRESHOLD_SECONDS), MAX_IDLE_THRESHOLD_SECONDS);
+}
+
+function normalizeTrackingProtectionSettings(value = {}) {
+  return {
+    idleDetectionEnabled: value?.idleDetectionEnabled !== false,
+    idleThresholdSeconds: normalizeIdleThresholdSeconds(value?.idleThresholdSeconds),
+    pauseOnLockScreen: value?.pauseOnLockScreen !== false
+  };
+}
+
+function createIdlePauseState({
+  enabled = false,
+  thresholdSeconds = DEFAULT_IDLE_THRESHOLD_SECONDS,
+  idleSeconds = 0,
+  isPaused = false,
+  pausedAt = 0
+} = {}) {
+  return {
+    enabled: Boolean(enabled),
+    thresholdSeconds: normalizeIdleThresholdSeconds(thresholdSeconds),
+    idleSeconds: Math.max(Math.floor(Number(idleSeconds) || 0), 0),
+    isPaused: Boolean(isPaused),
+    pausedAt: Boolean(isPaused) ? Math.max(Number(pausedAt) || 0, 0) : 0
+  };
+}
+
 function createEmptyData() {
   return { version: DATA_VERSION, days: {} };
 }
@@ -1860,7 +1892,14 @@ async function migrateUsageDataFile(filePath) {
 }
 
 class UsageTracker {
-  constructor({ userDataPath, onDataChanged, ruleSettings = {} }) {
+  constructor({
+    userDataPath,
+    onDataChanged,
+    ruleSettings = {},
+    trackingProtectionSettings = {},
+    getSystemIdleTime = null,
+    playbackSessionFusionService = null
+  }) {
     this.userDataPath = userDataPath;
     this.onDataChanged = onDataChanged;
     this.dataFilePath = path.join(userDataPath, 'usage-data.json');
@@ -1868,6 +1907,8 @@ class UsageTracker {
       customServiceRules: normalizeCustomServiceRules(ruleSettings.customServiceRules),
       categoryRules: normalizeCategoryRules(ruleSettings.categoryRules)
     };
+    this.trackingProtectionSettings = normalizeTrackingProtectionSettings(trackingProtectionSettings);
+    this.getSystemIdleTime = typeof getSystemIdleTime === 'function' ? getSystemIdleTime : null;
     this.ruleConfig = createRuleConfig(this.ruleSettings);
     this.data = createEmptyData();
     this.currentEntry = null;
@@ -1876,12 +1917,20 @@ class UsageTracker {
     this.saveTimer = null;
     this.httpServer = null;
     this.browserEvents = new BrowserEventCache();
-    this.playbackSessionFusionService = new HelperBackedPlaybackSessionFusionService();
+    this.playbackSessionFusionService = playbackSessionFusionService || new HelperBackedPlaybackSessionFusionService();
     this.entryHints = new Map();
     this.serializedDayCache = new Map();
     this.sortedDayKeysCache = [];
     this.sortedDayKeysDirty = true;
     this.saveChain = Promise.resolve();
+    this.manualPaused = false;
+    this.manualPausedAt = 0;
+    this.screenLocked = false;
+    this.screenLockedAt = 0;
+    this.idlePauseState = createIdlePauseState({
+      enabled: this.trackingProtectionSettings.idleDetectionEnabled,
+      thresholdSeconds: this.trackingProtectionSettings.idleThresholdSeconds
+    });
   }
 
   async init() {
@@ -1900,8 +1949,14 @@ class UsageTracker {
       this.timer = null;
     }
 
-    this.commitCurrentEntry(Date.now());
-    this.commitPlaybackEntries(Date.now());
+    const now = Date.now();
+    this.syncIdlePauseState(now);
+    if (!this.isForegroundTrackingPaused()) {
+      this.commitCurrentEntry(now);
+    }
+    if (!this.isPlaybackTrackingPaused()) {
+      this.commitPlaybackEntries(now);
+    }
     if (this.httpServer) {
       await new Promise((resolve) => this.httpServer.close(resolve));
       this.httpServer = null;
@@ -1979,8 +2034,13 @@ class UsageTracker {
 
   async flush() {
     const now = Date.now();
-    this.commitCurrentEntry(now);
-    this.commitPlaybackEntries(now);
+    this.syncIdlePauseState(now);
+    if (!this.isForegroundTrackingPaused()) {
+      this.commitCurrentEntry(now);
+    }
+    if (!this.isPlaybackTrackingPaused()) {
+      this.commitPlaybackEntries(now);
+    }
     await this.save();
   }
 
@@ -1997,8 +2057,13 @@ class UsageTracker {
 
   async updateRuleSettings(ruleSettings = {}) {
     const now = Date.now();
-    this.commitCurrentEntry(now);
-    this.commitPlaybackEntries(now);
+    this.syncIdlePauseState(now);
+    if (!this.isForegroundTrackingPaused()) {
+      this.commitCurrentEntry(now);
+    }
+    if (!this.isPlaybackTrackingPaused()) {
+      this.commitPlaybackEntries(now);
+    }
     this.ruleSettings = {
       customServiceRules: normalizeCustomServiceRules(ruleSettings.customServiceRules),
       categoryRules: normalizeCategoryRules(ruleSettings.categoryRules)
@@ -2013,6 +2078,242 @@ class UsageTracker {
     await this.save();
     await this.pollActiveWindow().catch(() => {});
     await this.emitDataChanged();
+  }
+
+  async updateTrackingProtectionSettings(trackingProtectionSettings = {}) {
+    const now = Date.now();
+    this.syncIdlePauseState(now);
+    if (!this.isForegroundTrackingPaused()) {
+      this.commitCurrentEntry(now);
+    }
+    if (!this.isPlaybackTrackingPaused()) {
+      this.commitPlaybackEntries(now);
+    }
+
+    this.trackingProtectionSettings = normalizeTrackingProtectionSettings(trackingProtectionSettings);
+    this.idlePauseState = createIdlePauseState({
+      enabled: this.trackingProtectionSettings.idleDetectionEnabled,
+      thresholdSeconds: this.trackingProtectionSettings.idleThresholdSeconds
+    });
+    this.currentEntry = null;
+    this.currentPlaybackEntries = new Map();
+
+    await this.pollActiveWindow().catch(() => {});
+    await this.emitDataChanged();
+  }
+
+  getIdleSignal(now = Date.now()) {
+    const detectionAvailable = typeof this.getSystemIdleTime === 'function';
+    const thresholdSeconds = normalizeIdleThresholdSeconds(this.trackingProtectionSettings.idleThresholdSeconds);
+    const enabled = Boolean(this.trackingProtectionSettings.idleDetectionEnabled && detectionAvailable);
+    let idleSeconds = 0;
+
+    if (enabled) {
+      try {
+        idleSeconds = Math.max(Math.floor(Number(this.getSystemIdleTime()) || 0), 0);
+      } catch {
+        idleSeconds = 0;
+      }
+    }
+
+    const isPaused = enabled && idleSeconds >= thresholdSeconds;
+    const pausedAt = isPaused
+      ? Math.max(now - (idleSeconds * 1000) + (thresholdSeconds * 1000), 0)
+      : 0;
+
+    return {
+      detectionAvailable,
+      enabled,
+      thresholdSeconds,
+      idleSeconds,
+      isPaused,
+      pausedAt
+    };
+  }
+
+  syncIdlePauseState(now = Date.now()) {
+    const previousState = this.idlePauseState || createIdlePauseState();
+    const nextSignal = this.getIdleSignal(now);
+    let changed = previousState.enabled !== nextSignal.enabled
+      || previousState.thresholdSeconds !== nextSignal.thresholdSeconds;
+
+    if (!previousState.isPaused && nextSignal.isPaused) {
+      this.pauseForegroundTracking(nextSignal.pausedAt || now);
+      changed = true;
+    } else if (previousState.isPaused !== nextSignal.isPaused) {
+      changed = true;
+    }
+
+    this.idlePauseState = createIdlePauseState({
+      enabled: nextSignal.enabled,
+      thresholdSeconds: nextSignal.thresholdSeconds,
+      idleSeconds: nextSignal.idleSeconds,
+      isPaused: nextSignal.isPaused,
+      pausedAt: nextSignal.isPaused
+        ? (previousState.isPaused ? (previousState.pausedAt || nextSignal.pausedAt) : nextSignal.pausedAt)
+        : 0
+    });
+
+    return changed;
+  }
+
+  isLockScreenPauseActive() {
+    return this.screenLocked && this.trackingProtectionSettings.pauseOnLockScreen;
+  }
+
+  isForegroundTrackingPaused() {
+    return this.manualPaused
+      || this.isLockScreenPauseActive()
+      || Boolean(this.idlePauseState?.isPaused);
+  }
+
+  isPlaybackTrackingPaused() {
+    return this.manualPaused || this.isLockScreenPauseActive();
+  }
+
+  isTrackingPaused() {
+    return this.isForegroundTrackingPaused() || this.isPlaybackTrackingPaused();
+  }
+
+  pauseForegroundTracking(now, { scheduleSave = true } = {}) {
+    const changed = this.commitLiveEntry(this.currentEntry, now);
+    const hadLiveEntry = Boolean(this.currentEntry);
+    this.currentEntry = null;
+
+    if (changed && scheduleSave) {
+      this.scheduleSave();
+    }
+
+    return changed || hadLiveEntry;
+  }
+
+  pausePlaybackTracking(now, { scheduleSave = true } = {}) {
+    let changed = false;
+    const hadLiveEntries = this.currentPlaybackEntries.size > 0;
+
+    for (const entry of this.currentPlaybackEntries.values()) {
+      changed = this.commitLiveEntry(entry, now) || changed;
+    }
+
+    this.currentPlaybackEntries = new Map();
+
+    if (changed && scheduleSave) {
+      this.scheduleSave();
+    }
+
+    return changed || hadLiveEntries;
+  }
+
+  pauseCurrentTracking(now) {
+    const foregroundChanged = this.pauseForegroundTracking(now, { scheduleSave: false });
+    const playbackChanged = this.pausePlaybackTracking(now, { scheduleSave: false });
+
+    if (foregroundChanged || playbackChanged) {
+      this.scheduleSave();
+    }
+
+    return foregroundChanged || playbackChanged;
+  }
+
+  getTrackingState(now = Date.now()) {
+    const idleSignal = this.getIdleSignal(now);
+    const lockScreenPaused = this.isLockScreenPauseActive();
+    const idlePaused = Boolean(this.idlePauseState?.isPaused || idleSignal.isPaused);
+    const idlePausedAt = idlePaused
+      ? (this.idlePauseState?.isPaused ? this.idlePauseState.pausedAt : idleSignal.pausedAt)
+      : 0;
+    const foregroundPauseReasons = [];
+    const playbackPauseReasons = [];
+
+    if (this.manualPaused) {
+      foregroundPauseReasons.push('manual');
+      playbackPauseReasons.push('manual');
+    }
+    if (lockScreenPaused) {
+      foregroundPauseReasons.push('lock-screen');
+      playbackPauseReasons.push('lock-screen');
+    }
+    if (idlePaused) {
+      foregroundPauseReasons.push('idle');
+    }
+
+    const foregroundPauseStartedAt = [
+      this.manualPaused ? this.manualPausedAt : 0,
+      lockScreenPaused ? this.screenLockedAt : 0,
+      idlePausedAt
+    ].filter(Boolean);
+    const playbackPauseStartedAt = [
+      this.manualPaused ? this.manualPausedAt : 0,
+      lockScreenPaused ? this.screenLockedAt : 0
+    ].filter(Boolean);
+    const pauseReasons = [...new Set([...foregroundPauseReasons, ...playbackPauseReasons])];
+    const pauseStartedAt = [...foregroundPauseStartedAt, ...playbackPauseStartedAt].filter(Boolean);
+
+    return {
+      isPaused: pauseReasons.length > 0,
+      pausedAt: pauseStartedAt.length ? Math.min(...pauseStartedAt) : 0,
+      pauseReasons,
+      foregroundPaused: foregroundPauseReasons.length > 0,
+      foregroundPausedAt: foregroundPauseStartedAt.length ? Math.min(...foregroundPauseStartedAt) : 0,
+      foregroundPauseReasons,
+      playbackPaused: playbackPauseReasons.length > 0,
+      playbackPausedAt: playbackPauseStartedAt.length ? Math.min(...playbackPauseStartedAt) : 0,
+      playbackPauseReasons,
+      manualPaused: this.manualPaused,
+      manualPausedAt: this.manualPaused ? this.manualPausedAt : 0,
+      screenLocked: this.screenLocked,
+      screenLockedAt: this.screenLocked ? this.screenLockedAt : 0,
+      pauseOnLockScreen: this.trackingProtectionSettings.pauseOnLockScreen,
+      lockScreenPaused,
+      idleDetectionEnabled: Boolean(this.trackingProtectionSettings.idleDetectionEnabled),
+      idleDetectionAvailable: idleSignal.detectionAvailable,
+      idleThresholdSeconds: idleSignal.thresholdSeconds,
+      idleSeconds: idleSignal.idleSeconds,
+      idlePaused,
+      idlePausedAt
+    };
+  }
+
+  async setManualPaused(isPaused, pausedAt = Date.now()) {
+    const nextPaused = Boolean(isPaused);
+    if (this.manualPaused === nextPaused) {
+      return this.getTrackingState(pausedAt);
+    }
+
+    if (nextPaused) {
+      this.pauseCurrentTracking(pausedAt);
+    }
+
+    this.manualPaused = nextPaused;
+    this.manualPausedAt = nextPaused ? pausedAt : 0;
+    await this.emitDataChanged();
+
+    if (!this.isForegroundTrackingPaused() || !this.isPlaybackTrackingPaused()) {
+      await this.pollActiveWindow().catch(() => {});
+    }
+
+    return this.getTrackingState();
+  }
+
+  async setScreenLocked(isLocked, lockedAt = Date.now()) {
+    const nextLocked = Boolean(isLocked);
+    if (this.screenLocked === nextLocked) {
+      return this.getTrackingState(lockedAt);
+    }
+
+    if (nextLocked && this.trackingProtectionSettings.pauseOnLockScreen) {
+      this.pauseCurrentTracking(lockedAt);
+    }
+
+    this.screenLocked = nextLocked;
+    this.screenLockedAt = nextLocked ? lockedAt : 0;
+    await this.emitDataChanged();
+
+    if (!this.isForegroundTrackingPaused() || !this.isPlaybackTrackingPaused()) {
+      await this.pollActiveWindow().catch(() => {});
+    }
+
+    return this.getTrackingState();
   }
 
   async startBrowserBridge() {
@@ -2131,21 +2432,45 @@ class UsageTracker {
 
   async pollActiveWindow() {
     const now = Date.now();
-    this.commitCurrentEntry(now);
-    this.commitPlaybackEntries(now);
+    const pauseStateChanged = this.syncIdlePauseState(now);
+    if (!this.isForegroundTrackingPaused()) {
+      this.commitCurrentEntry(now);
+    }
+    if (!this.isPlaybackTrackingPaused()) {
+      this.commitPlaybackEntries(now);
+    }
+
+    if (this.isForegroundTrackingPaused() && this.isPlaybackTrackingPaused()) {
+      if (pauseStateChanged) {
+        await this.emitDataChanged();
+      }
+      return;
+    }
 
     const [activeWindow, playbackSessions] = await Promise.all([
-      getActiveWindow().catch(() => null),
-      this.playbackSessionFusionService.poll()
+      this.isForegroundTrackingPaused()
+        ? Promise.resolve(null)
+        : getActiveWindow().catch(() => null),
+      this.isPlaybackTrackingPaused()
+        ? Promise.resolve([])
+        : this.playbackSessionFusionService.poll()
     ]);
-    const playbackChanged = this.replacePlaybackEntries(playbackSessions, now);
-    const normalized = this.normalizeWindow(activeWindow, now);
-    const nextEntry = this.shouldSuppressForegroundEntry(normalized) ? null : normalized;
+
     const previousEntryKey = this.currentEntry ? this.currentEntry.key : null;
+    let playbackChanged = false;
+    if (!this.isPlaybackTrackingPaused()) {
+      playbackChanged = this.replacePlaybackEntries(playbackSessions, now);
+    }
+
+    let nextEntry = null;
+    if (!this.isForegroundTrackingPaused()) {
+      const normalized = this.normalizeWindow(activeWindow, now);
+      nextEntry = this.shouldSuppressForegroundEntry(normalized) ? null : normalized;
+    }
     this.currentEntry = nextEntry;
 
     if (nextEntry || this.currentPlaybackEntries.size || playbackChanged || previousEntryKey !== (nextEntry ? nextEntry.key : null)) {
-      this.emitDataChanged();
+      await this.emitDataChanged();
     }
   }
 
@@ -2585,7 +2910,8 @@ class UsageTracker {
         currentEntryKey: this.currentEntry ? this.currentEntry.key : null,
         currentPlaybackEntryKeys: [...this.currentPlaybackEntries.keys()],
         bridgeUrl: `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}${BRIDGE_ENDPOINT_BROWSER_EVENT}`,
-        browserExtensionStatus: this.browserEvents.getExtensionStatus()
+        browserExtensionStatus: this.browserEvents.getExtensionStatus(),
+        trackingState: this.getTrackingState()
       },
       daily: {
         availableDays: dayKeys,
