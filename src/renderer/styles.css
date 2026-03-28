@@ -752,6 +752,55 @@ canvas {
   word-break: break-all;
 }
 
+.detail-pages-card {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-pages-list {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-page-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding: 14px 0;
+}
+
+.detail-page-item + .detail-page-item {
+  border-top: 1px solid var(--line);
+}
+
+.detail-page-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.detail-page-title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.detail-page-meta,
+.detail-page-submeta {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.detail-page-duration {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 .setting-row {
   width: 100%;
   display: flex;

@@ -541,6 +541,20 @@ test('browser extension cache tracks heartbeat freshness separately from page ev
   }
 });
 
+test('browser extension cache preserves SPA routes with query and hash fragments', () => {
+  const cache = new __testables.BrowserEventCache();
+  cache.upsert({
+    browserFamily: 'Chrome',
+    extensionVersion: '1.1.1',
+    pageTitle: 'Responses API',
+    url: 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming'
+  });
+
+  const event = cache.getFresh('Chrome');
+  assert.equal(event.url, 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming');
+  assert.equal(event.path, '/docs/guides/responses?mode=spa#streaming');
+});
+
 test('snapshot meta exposes browser extension status for renderer prompts', () => {
   const originalNow = Date.now;
   let now = 5000;
@@ -670,6 +684,68 @@ test('idle pause truncates the current foreground interval and keeps music playb
   assert.equal(snapshot.meta.trackingState.playbackPaused, false);
   assert.equal(snapshot.meta.trackingState.idlePaused, true);
   assert.deepEqual(snapshot.meta.trackingState.pauseReasons, ['idle']);
+});
+
+test('site detail exposes page-level drill-down aggregated by route', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-pages'),
+    onDataChanged: null
+  });
+
+  const docsEntry = {
+    key: 'site:openai',
+    kind: 'site',
+    label: 'openai',
+    subtitle: 'Docs',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: 'OpenAI Docs',
+    windowTitle: 'OpenAI Docs',
+    url: 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming',
+    host: 'openai.com',
+    path: '/docs/guides/responses?mode=spa#streaming',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#1c8cff',
+    startedAt: new Date(2026, 2, 28, 14, 0, 0, 0).getTime(),
+    lastSeenAt: new Date(2026, 2, 28, 14, 0, 0, 0).getTime()
+  };
+
+  const pricingEntry = {
+    ...docsEntry,
+    pageTitle: 'API Pricing',
+    windowTitle: 'API Pricing',
+    url: 'https://platform.openai.com/pricing',
+    path: '/pricing'
+  };
+
+  tracker.applyDuration(docsEntry, new Date(2026, 2, 28, 14, 0, 0, 0), 180000);
+  tracker.applyDuration(pricingEntry, new Date(2026, 2, 28, 15, 0, 0, 0), 60000);
+
+  const detail = tracker.getItemDetail('site:openai');
+  assert.equal(detail.pageBreakdown.length, 2);
+  assert.equal(detail.pageBreakdown[0].path, '/docs/guides/responses?mode=spa#streaming');
+  assert.equal(detail.pageBreakdown[0].totalMs, 180000);
+  assert.equal(detail.pageBreakdown[0].todayMs, 180000);
+  assert.equal(detail.pageBreakdown[1].path, '/pricing');
+  assert.equal(detail.pageBreakdown[1].totalMs, 60000);
 });
 
 test('usage tracker restores from backup when primary file is structurally invalid', async () => {
