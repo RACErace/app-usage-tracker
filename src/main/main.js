@@ -16,6 +16,9 @@ const SHOW_WINDOW_ARG = '--show-window';
 const CLOSE_ACTION_EXIT = 'exit';
 const CLOSE_ACTION_TRAY = 'tray';
 const CLOSE_ACTION_ASK = 'ask';
+const THEME_PREFERENCE_LIGHT = 'light';
+const THEME_PREFERENCE_DARK = 'dark';
+const THEME_PREFERENCE_SYSTEM = 'system';
 const AUTO_BACKUP_DIR_NAME = 'backups';
 const AUTO_BACKUP_MAX_TIMER_DELAY_MS = 2147483647;
 const BACKUP_FILE_FILTERS = [
@@ -24,6 +27,7 @@ const BACKUP_FILE_FILTERS = [
 const DEFAULT_APP_SETTINGS = Object.freeze({
   hiddenItemKeys: [],
   closeWindowAction: CLOSE_ACTION_TRAY,
+  themePreference: THEME_PREFERENCE_SYSTEM,
   autoBackupEnabled: false,
   autoBackupIntervalMinutes: DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
   lastAutoBackupAt: ''
@@ -103,11 +107,20 @@ function normalizeCloseWindowAction(value) {
   return CLOSE_ACTION_TRAY;
 }
 
+function normalizeThemePreference(value) {
+  if (value === THEME_PREFERENCE_LIGHT || value === THEME_PREFERENCE_DARK || value === THEME_PREFERENCE_SYSTEM) {
+    return value;
+  }
+
+  return THEME_PREFERENCE_SYSTEM;
+}
+
 function normalizeImportedBackupSettings(value) {
   return {
     autoLaunchEnabled: Boolean(value?.autoLaunchEnabled),
     hiddenItemKeys: normalizeHiddenItemKeys(value?.hiddenItemKeys),
     closeWindowAction: normalizeCloseWindowAction(value?.closeWindowAction),
+    themePreference: normalizeThemePreference(value?.themePreference),
     autoBackupEnabled: Boolean(value?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(value?.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof value?.lastAutoBackupAt === 'string' ? value.lastAutoBackupAt.trim() : ''
@@ -133,6 +146,7 @@ function getStoredSettingsPayload() {
     autoLaunchEnabled,
     hiddenItemKeys: [...appSettings.hiddenItemKeys],
     closeWindowAction: appSettings.closeWindowAction,
+    themePreference: normalizeThemePreference(appSettings.themePreference),
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
@@ -157,6 +171,7 @@ async function loadAppSettings() {
   appSettings = {
     hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
     closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction),
+    themePreference: normalizeThemePreference(parsed?.themePreference),
     autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : ''
@@ -185,6 +200,7 @@ async function saveAppSettings() {
   const serializedSnapshot = JSON.stringify({
     hiddenItemKeys: [...appSettings.hiddenItemKeys],
     closeWindowAction: appSettings.closeWindowAction,
+    themePreference: normalizeThemePreference(appSettings.themePreference),
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
     lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
@@ -222,6 +238,12 @@ async function writeHiddenItemKeys(hiddenItemKeys) {
 
 async function writeCloseWindowAction(closeWindowAction) {
   appSettings.closeWindowAction = normalizeCloseWindowAction(closeWindowAction);
+  await saveAppSettings();
+  notifySettingsChanged();
+}
+
+async function writeThemePreference(themePreference) {
+  appSettings.themePreference = normalizeThemePreference(themePreference);
   await saveAppSettings();
   notifySettingsChanged();
 }
@@ -373,6 +395,7 @@ async function applyImportedBackupSettings(restoredSettings) {
   appSettings = {
     hiddenItemKeys: normalized.hiddenItemKeys,
     closeWindowAction: normalized.closeWindowAction,
+    themePreference: normalized.themePreference,
     autoBackupEnabled: normalized.autoBackupEnabled,
     autoBackupIntervalMinutes: normalized.autoBackupIntervalMinutes,
     lastAutoBackupAt: normalized.lastAutoBackupAt
@@ -767,6 +790,11 @@ ipcMain.handle('settings:set-hidden-item-keys', async (_event, hiddenItemKeys) =
 
 ipcMain.handle('settings:set-close-window-action', async (_event, closeWindowAction) => {
   await writeCloseWindowAction(closeWindowAction);
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-theme-preference', async (_event, themePreference) => {
+  await writeThemePreference(themePreference);
   return getSettingsPayload();
 });
 

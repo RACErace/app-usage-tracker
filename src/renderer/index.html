@@ -11,7 +11,7 @@
       <header class="topbar">
         <button class="icon-button back-button inactive" type="button" id="back-button" aria-label="返回">‹</button>
         <div class="title-block">
-          <h1 class="screen-title" id="screen-title"></h1>
+          <h1 class="screen-title" id="screen-title">使用统计</h1>
         </div>
       </header>
 
@@ -35,6 +35,26 @@
             <p class="warning-banner-text" id="browser-extension-warning-text"></p>
           </article>
 
+          <section class="overview-summary-grid">
+            <article class="card compact-card summary-tile summary-tile-primary">
+              <span class="summary-kicker" id="overview-summary-kicker">今日统计</span>
+              <strong class="summary-value" id="overview-summary-value">0 分钟</strong>
+              <span class="summary-caption" id="overview-summary-caption">等待采集使用数据</span>
+            </article>
+
+            <article class="card compact-card summary-tile">
+              <span class="summary-kicker">显示项目</span>
+              <strong class="summary-value" id="overview-visible-count">0 项</strong>
+              <span class="summary-caption" id="overview-visible-caption">暂无可用项目</span>
+            </article>
+
+            <article class="card compact-card summary-tile">
+              <span class="summary-kicker">浏览器识别</span>
+              <strong class="summary-value" id="overview-bridge-status">读取中</strong>
+              <span class="summary-caption" id="overview-bridge-caption">等待浏览器插件连接</span>
+            </article>
+          </section>
+
           <div class="overview-grid">
             <section class="section-block chart-section">
               <div class="section-title-row">
@@ -47,7 +67,7 @@
                     <div class="big-metric" id="summary-duration">0 分钟</div>
                     <div class="sub-metric" id="summary-subtitle"></div>
                   </div>
-                  <button class="icon-button info-button" type="button" id="refresh-button" aria-label="刷新">i</button>
+                  <button class="icon-button info-button" type="button" id="refresh-button" aria-label="刷新">刷新</button>
                 </div>
 
                 <div class="chart-wrap">
@@ -65,7 +85,7 @@
             <section class="section-block ranking-section">
               <div class="section-title-row">
                 <h2 class="section-title">使用排行</h2>
-                <button class="text-button inline-button" type="button" id="category-button">显示类别</button>
+                <span class="section-meta" id="ranking-summary">按时长排序</span>
               </div>
 
               <article class="card list-card">
@@ -122,6 +142,26 @@
         <section class="screen" id="settings-screen">
           <div class="settings-layout">
             <div class="settings-stack">
+              <article class="card settings-panel">
+                <div class="section-title-row settings-section-header">
+                  <div>
+                    <h3 class="section-title">主题样式</h3>
+                    <p class="settings-description">在浅色、深色和跟随系统之间切换，主题会立即应用到图表、卡片和整体背景。</p>
+                  </div>
+                </div>
+
+                <div class="option-chip-group" id="theme-preference-group" role="radiogroup" aria-label="主题样式">
+                  <button class="option-chip" type="button" data-theme-preference="light" role="radio" aria-checked="false">浅色主题</button>
+                  <button class="option-chip" type="button" data-theme-preference="dark" role="radio" aria-checked="false">深色主题</button>
+                  <button class="option-chip" type="button" data-theme-preference="system" role="radio" aria-checked="false">跟随系统</button>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot" id="theme-status-dot"></span>
+                  <span class="status-text" id="theme-status-text">读取中</span>
+                </div>
+              </article>
+
               <article class="card settings-panel">
                 <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
                   <div class="setting-copy">
@@ -230,25 +270,35 @@
               </article>
             </div>
 
-            <article class="bridge-card settings-help-card">
-              <div>
-                <h3>系统托盘说明</h3>
-                <p>最小化和关闭窗口都会隐藏到托盘。右键托盘图标可以显示主窗口、切换开机自启动和退出程序。</p>
-              </div>
-            </article>
-
-            <article class="bridge-card settings-help-card">
-              <div>
-                <h3>浏览器网页识别</h3>
-                <div class="setting-status-line bridge-status-line">
-                  <span class="status-dot" id="browser-extension-status-dot"></span>
-                  <span class="status-text" id="browser-extension-status-text">读取中</span>
+            <aside class="info-stack settings-sidebar">
+              <article class="bridge-card settings-help-card">
+                <div>
+                  <h3>界面体验</h3>
+                  <p>主题切换会即时生效；如果选择跟随系统，应用会随着 Windows 当前配色自动切换浅色或深色。</p>
                 </div>
-                <p class="bridge-status-detail" id="browser-extension-status-detail"></p>
-                <p id="settings-bridge-url-text"></p>
-              </div>
-              <p class="bridge-hint">当前会把同一个根域名下的网页合并统计，例如不同的 bilibili 视频页都会记到 bilibili。</p>
-            </article>
+                <p class="bridge-hint">推荐在白天使用浅色主题、夜间使用深色主题，或者直接交给系统统一控制。</p>
+              </article>
+
+              <article class="bridge-card settings-help-card">
+                <div>
+                  <h3>系统托盘说明</h3>
+                  <p>最小化和关闭窗口都会隐藏到托盘。右键托盘图标可以显示主窗口、切换开机自启动和退出程序。</p>
+                </div>
+              </article>
+
+              <article class="bridge-card settings-help-card">
+                <div>
+                  <h3>浏览器网页识别</h3>
+                  <div class="setting-status-line bridge-status-line">
+                    <span class="status-dot" id="browser-extension-status-dot"></span>
+                    <span class="status-text" id="browser-extension-status-text">读取中</span>
+                  </div>
+                  <p class="bridge-status-detail" id="browser-extension-status-detail"></p>
+                  <p id="settings-bridge-url-text"></p>
+                </div>
+                <p class="bridge-hint">当前会把同一个根域名下的网页合并统计，例如不同的 bilibili 视频页都会记到 bilibili。</p>
+              </article>
+            </aside>
           </div>
         </section>
       </main>
