@@ -2,6 +2,12 @@ const fs = require('fs/promises');
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const {
+  cloneRuleList,
+  getAvailableCategories,
+  normalizeCategoryRules,
+  normalizeCustomServiceRules
+} = require('./customization');
+const {
   DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
   normalizeAutoBackupIntervalMinutes,
   calculateNextAutoBackupAt
@@ -30,7 +36,9 @@ const DEFAULT_APP_SETTINGS = Object.freeze({
   themePreference: THEME_PREFERENCE_SYSTEM,
   autoBackupEnabled: false,
   autoBackupIntervalMinutes: DEFAULT_AUTO_BACKUP_INTERVAL_MINUTES,
-  lastAutoBackupAt: ''
+  lastAutoBackupAt: '',
+  customServiceRules: [],
+  categoryRules: []
 });
 
 let mainWindow;
@@ -123,7 +131,16 @@ function normalizeImportedBackupSettings(value) {
     themePreference: normalizeThemePreference(value?.themePreference),
     autoBackupEnabled: Boolean(value?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(value?.autoBackupIntervalMinutes),
-    lastAutoBackupAt: typeof value?.lastAutoBackupAt === 'string' ? value.lastAutoBackupAt.trim() : ''
+    lastAutoBackupAt: typeof value?.lastAutoBackupAt === 'string' ? value.lastAutoBackupAt.trim() : '',
+    customServiceRules: normalizeCustomServiceRules(value?.customServiceRules),
+    categoryRules: normalizeCategoryRules(value?.categoryRules)
+  };
+}
+
+function getTrackerRuleSettings() {
+  return {
+    customServiceRules: cloneRuleList(appSettings.customServiceRules),
+    categoryRules: cloneRuleList(appSettings.categoryRules)
   };
 }
 
@@ -149,7 +166,9 @@ function getStoredSettingsPayload() {
     themePreference: normalizeThemePreference(appSettings.themePreference),
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
-    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
+    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : '',
+    customServiceRules: cloneRuleList(appSettings.customServiceRules),
+    categoryRules: cloneRuleList(appSettings.categoryRules)
   };
 }
 
@@ -158,7 +177,8 @@ function getSettingsPayload() {
     ...getStoredSettingsPayload(),
     autoBackupDirectory: getAutoBackupDirectory(),
     nextAutoBackupAt: getNextAutoBackupAt(),
-    lastAutoBackupError
+    lastAutoBackupError,
+    availableCategories: getAvailableCategories()
   };
 }
 
@@ -174,7 +194,9 @@ async function loadAppSettings() {
     themePreference: normalizeThemePreference(parsed?.themePreference),
     autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
-    lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : ''
+    lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : '',
+    customServiceRules: normalizeCustomServiceRules(parsed?.customServiceRules),
+    categoryRules: normalizeCategoryRules(parsed?.categoryRules)
   };
 
   if (loaded.recoveredFromBackup) {
@@ -203,7 +225,9 @@ async function saveAppSettings() {
     themePreference: normalizeThemePreference(appSettings.themePreference),
     autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
     autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
-    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
+    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : '',
+    customServiceRules: cloneRuleList(appSettings.customServiceRules),
+    categoryRules: cloneRuleList(appSettings.categoryRules)
   }, null, 2);
 
   appSettingsSaveChain = appSettingsSaveChain
@@ -245,6 +269,24 @@ async function writeCloseWindowAction(closeWindowAction) {
 async function writeThemePreference(themePreference) {
   appSettings.themePreference = normalizeThemePreference(themePreference);
   await saveAppSettings();
+  notifySettingsChanged();
+}
+
+async function writeCustomServiceRules(customServiceRules) {
+  appSettings.customServiceRules = normalizeCustomServiceRules(customServiceRules);
+  await saveAppSettings();
+  if (usageTracker) {
+    await usageTracker.updateRuleSettings(getTrackerRuleSettings());
+  }
+  notifySettingsChanged();
+}
+
+async function writeCategoryRules(categoryRules) {
+  appSettings.categoryRules = normalizeCategoryRules(categoryRules);
+  await saveAppSettings();
+  if (usageTracker) {
+    await usageTracker.updateRuleSettings(getTrackerRuleSettings());
+  }
   notifySettingsChanged();
 }
 
@@ -398,11 +440,16 @@ async function applyImportedBackupSettings(restoredSettings) {
     themePreference: normalized.themePreference,
     autoBackupEnabled: normalized.autoBackupEnabled,
     autoBackupIntervalMinutes: normalized.autoBackupIntervalMinutes,
-    lastAutoBackupAt: normalized.lastAutoBackupAt
+    lastAutoBackupAt: normalized.lastAutoBackupAt,
+    customServiceRules: normalized.customServiceRules,
+    categoryRules: normalized.categoryRules
   };
   lastAutoBackupError = '';
   await saveAppSettings();
   writeAutoLaunchState(normalized.autoLaunchEnabled);
+  if (usageTracker) {
+    await usageTracker.updateRuleSettings(getTrackerRuleSettings());
+  }
   scheduleAutoBackup();
   notifySettingsChanged();
 }
@@ -727,6 +774,7 @@ async function bootstrap() {
 
   usageTracker = new UsageTracker({
     userDataPath: app.getPath('userData'),
+    ruleSettings: getTrackerRuleSettings(),
     onDataChanged: async () => {
       pushUsageSnapshot();
     }
@@ -795,6 +843,16 @@ ipcMain.handle('settings:set-close-window-action', async (_event, closeWindowAct
 
 ipcMain.handle('settings:set-theme-preference', async (_event, themePreference) => {
   await writeThemePreference(themePreference);
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-custom-service-rules', async (_event, customServiceRules) => {
+  await writeCustomServiceRules(customServiceRules);
+  return getSettingsPayload();
+});
+
+ipcMain.handle('settings:set-category-rules', async (_event, categoryRules) => {
+  await writeCategoryRules(categoryRules);
   return getSettingsPayload();
 });
 

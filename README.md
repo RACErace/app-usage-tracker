@@ -10,7 +10,8 @@ App Usage Tracker is a Windows-focused desktop usage tracker built with Electron
 - Track actual music playback time with a hybrid SMTC + WASAPI detector, including background playback
 - Attribute browser time to websites when the browser extension is enabled
 - Aggregate web usage by root domain instead of individual URLs
-- Merge supported desktop apps and websites into the same service bucket
+- Create custom service merge rules for desktop apps plus website domains
+- Apply category rules such as Work, Entertainment, Study, or Communication
 - View daily rankings, 7-day trends, and per-item detail pages
 - Run from the system tray and support launch at login
 - Query local usage data from the CLI
@@ -187,7 +188,7 @@ On tags matching `v*`, it also creates a GitHub Release and uploads:
 
 - The project currently focuses on Windows
 - Firefox support is limited; the bundled extension is implemented for Chromium-style extension APIs
-- Service merging is rule-based, not arbitrary cross-app matching
+- Service merging and categorization depend on the rules you configure; unmatched items stay as regular apps or sites
 - Direct favicon or raw asset URLs may occasionally appear as recent web entries
 - Music playback tracking still depends on the player exposing a recognizable SMTC or WASAPI session; browser-based web players are not tracked as separate music apps
 

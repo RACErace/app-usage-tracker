@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('usageApi', {
   setAutoBackupSettings: (settings) => ipcRenderer.invoke('settings:set-auto-backup', settings),
   setCloseWindowAction: (closeWindowAction) => ipcRenderer.invoke('settings:set-close-window-action', closeWindowAction),
   setThemePreference: (themePreference) => ipcRenderer.invoke('settings:set-theme-preference', themePreference),
+  setCustomServiceRules: (customServiceRules) => ipcRenderer.invoke('settings:set-custom-service-rules', customServiceRules),
+  setCategoryRules: (categoryRules) => ipcRenderer.invoke('settings:set-category-rules', categoryRules),
   setHiddenItemKeys: (hiddenItemKeys) => ipcRenderer.invoke('settings:set-hidden-item-keys', hiddenItemKeys),
   forcePoll: () => ipcRenderer.invoke('usage:force-poll'),
   onDataChanged: (listener) => {

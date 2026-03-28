@@ -100,15 +100,18 @@ function parseCommandArgs(args, extraOptions = {}) {
 
 async function loadTracker(values) {
   const paths = resolveStoragePaths(values);
+  const settings = await loadSettings(paths);
   const tracker = new UsageTracker({
     userDataPath: paths.userDataPath,
-    onDataChanged: null
+    onDataChanged: null,
+    ruleSettings: {
+      customServiceRules: settings.customServiceRules,
+      categoryRules: settings.categoryRules
+    }
   });
 
   tracker.dataFilePath = paths.dataFilePath;
   await tracker.load();
-
-  const settings = await loadSettings(paths);
   const hiddenItemKeySet = new Set(settings.hiddenItemKeys);
   const snapshot = filterSnapshot(tracker.getSnapshot(), hiddenItemKeySet);
 
@@ -128,11 +131,15 @@ async function loadSettings(paths) {
     const rawSettings = await fs.readFile(settingsFilePath, 'utf8');
     const parsed = JSON.parse(rawSettings);
     return {
-      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys)
+      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
+      customServiceRules: Array.isArray(parsed?.customServiceRules) ? parsed.customServiceRules : [],
+      categoryRules: Array.isArray(parsed?.categoryRules) ? parsed.categoryRules : []
     };
   } catch {
     return {
-      hiddenItemKeys: []
+      hiddenItemKeys: [],
+      customServiceRules: [],
+      categoryRules: []
     };
   }
 }
@@ -191,6 +198,8 @@ function buildFilteredWeekly(snapshot, hiddenItemKeySet) {
       existing.appName = item.appName || existing.appName;
       existing.executablePath = item.executablePath || existing.executablePath;
       existing.browserFamily = item.browserFamily || existing.browserFamily;
+      existing.categoryId = item.categoryId || existing.categoryId || '';
+      existing.categoryLabel = item.categoryLabel || existing.categoryLabel || '';
       existing.lastSeenAt = item.lastSeenAt || existing.lastSeenAt;
       existing.trackingMode = item.trackingMode || existing.trackingMode;
       existing.trackingSource = item.trackingSource || existing.trackingSource;
@@ -289,6 +298,8 @@ function buildCatalog(snapshot) {
         existing.host = item.host;
         existing.path = item.path;
         existing.executablePath = item.executablePath;
+        existing.categoryId = item.categoryId || existing.categoryId || '';
+        existing.categoryLabel = item.categoryLabel || existing.categoryLabel || '';
         existing.trackingMode = item.trackingMode;
         existing.trackingSource = item.trackingSource;
         existing.sourceAppUserModelId = item.sourceAppUserModelId;
@@ -322,6 +333,8 @@ function summarizeItem(item) {
     subtitle: item.subtitle,
     appName: item.appName,
     browserFamily: item.browserFamily || null,
+    categoryId: item.categoryId || '',
+    categoryLabel: item.categoryLabel || '',
     pageTitle: item.pageTitle,
     host: item.host,
     url: item.url,
