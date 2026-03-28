@@ -76,6 +76,29 @@ async function postActiveTab(tabId) {
   }
 }
 
+async function postObservedPage({ tabId, url, pageTitle }) {
+  if (!tabId || !url || !/^https?:/i.test(url)) {
+    return;
+  }
+
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!activeTab || activeTab.id !== tabId) {
+      return;
+    }
+
+    await postBridgePayload(BROWSER_EVENT_URL, {
+      browserFamily: await getBrowserFamily(),
+      extensionVersion: getExtensionVersion(),
+      pageTitle: pageTitle || url,
+      url,
+      sentAt: Date.now()
+    });
+  } catch {
+    // 桌面端未运行时静默忽略。
+  }
+}
+
 async function sendCurrentActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -114,6 +137,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.windows.onFocusChanged.addListener(() => {
   syncCurrentBrowserState();
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'usage-tracker:page-observed') {
+    return;
+  }
+
+  postObservedPage({
+    tabId: sender?.tab?.id,
+    url: message.url,
+    pageTitle: message.pageTitle
+  });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {

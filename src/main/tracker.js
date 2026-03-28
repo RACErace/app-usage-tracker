@@ -430,6 +430,23 @@ function normalizeUrl(rawUrl) {
   }
 }
 
+function parseTrackingUrl(rawUrl) {
+  try {
+    return new URL(rawUrl);
+  } catch {
+    return null;
+  }
+}
+
+function getTrackingPath(url) {
+  if (!url) {
+    return '/';
+  }
+
+  const pathname = sanitizeText(url.pathname, '/');
+  return sanitizeText(`${pathname}${url.search || ''}${url.hash || ''}`, pathname || '/');
+}
+
 function isIpHost(hostname) {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
 }
@@ -836,9 +853,10 @@ function canonicalizeEntry(entry, ruleConfig = DEFAULT_RULE_CONFIG) {
 }
 
 function cloneItem(item) {
+  const { pages, ...rest } = item || {};
   return {
-    ...item,
-    hourly: [...item.hourly]
+    ...rest,
+    hourly: [...(item?.hourly || new Array(24).fill(0))]
   };
 }
 
@@ -898,20 +916,20 @@ class BrowserEventCache {
       source: 'browser-event'
     });
 
-    const normalizedUrl = normalizeUrl(payload.url);
-    if (!normalizedUrl) {
+    const trackingUrl = parseTrackingUrl(payload.url);
+    if (!trackingUrl) {
       return null;
     }
 
     const key = browserFamily.toLowerCase();
     this.events.set(key, {
       browserFamily,
-      pageTitle: sanitizeText(payload.pageTitle, normalizedUrl.hostname),
-      url: normalizedUrl.toString(),
-      host: normalizedUrl.hostname,
-      rootDomain: getRootDomain(normalizedUrl.hostname),
-      displayName: getDomainDisplayName(normalizedUrl.hostname),
-      path: normalizedUrl.pathname || '/',
+      pageTitle: sanitizeText(payload.pageTitle, trackingUrl.hostname),
+      url: trackingUrl.toString(),
+      host: trackingUrl.hostname,
+      rootDomain: getRootDomain(trackingUrl.hostname),
+      displayName: getDomainDisplayName(trackingUrl.hostname),
+      path: getTrackingPath(trackingUrl),
       receivedAt
     });
 
@@ -1041,6 +1059,90 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function buildPageBucketKey(host, path) {
+  const normalizedHost = sanitizeText(host).toLowerCase();
+  const normalizedPath = sanitizeText(path, '/');
+  if (!normalizedHost || !normalizedPath) {
+    return '';
+  }
+
+  return `page:${hashString(`${normalizedHost}|${normalizedPath}`)}`;
+}
+
+function createPageBucketFromEntry(entry) {
+  const trackingUrl = parseTrackingUrl(entry?.url || '');
+  const host = sanitizeText(entry?.pageHost || trackingUrl?.hostname || entry?.host).toLowerCase();
+  const path = sanitizeText(entry?.path, getTrackingPath(trackingUrl));
+  const key = buildPageBucketKey(host, path);
+  if (!key) {
+    return null;
+  }
+
+  const pageTitle = sanitizeText(entry?.pageTitle || entry?.windowTitle || path, path);
+  return {
+    key,
+    label: sanitizeText(pageTitle, path),
+    pageTitle,
+    url: sanitizeText(entry?.url),
+    host,
+    path,
+    totalMs: 0,
+    hourly: new Array(24).fill(0),
+    lastSeenAt: Number(entry?.lastSeenAt) || Number(entry?.startedAt) || 0
+  };
+}
+
+function cloneStoredPageBucket(page) {
+  const key = sanitizeText(page?.key);
+  if (!key) {
+    return null;
+  }
+
+  return {
+    key,
+    label: sanitizeText(page?.label, page?.pageTitle || page?.path || page?.host || key),
+    pageTitle: sanitizeText(page?.pageTitle, page?.label || page?.path || ''),
+    url: sanitizeText(page?.url),
+    host: sanitizeText(page?.host).toLowerCase(),
+    path: sanitizeText(page?.path, '/'),
+    totalMs: Number(page?.totalMs) || 0,
+    hourly: ensureArray24(page?.hourly),
+    lastSeenAt: Number(page?.lastSeenAt) || 0
+  };
+}
+
+function cloneStoredPageBuckets(source) {
+  if (!isPlainObject(source)) {
+    return {};
+  }
+
+  const result = {};
+  for (const [pageKey, page] of Object.entries(source)) {
+    const normalized = cloneStoredPageBucket({ ...page, key: sanitizeText(page?.key, pageKey) });
+    if (normalized) {
+      result[normalized.key] = normalized;
+    }
+  }
+
+  return result;
+}
+
+function mergeStoredPageBucket(target, source) {
+  target.totalMs += Number(source?.totalMs) || 0;
+  target.hourly = target.hourly.map((value, index) => value + ((source?.hourly && source.hourly[index]) || 0));
+
+  const sourceSeenAt = Number(source?.lastSeenAt) || 0;
+  const targetSeenAt = Number(target?.lastSeenAt) || 0;
+  if (sourceSeenAt >= targetSeenAt) {
+    target.label = sanitizeText(source?.label, target.label);
+    target.pageTitle = sanitizeText(source?.pageTitle, target.pageTitle);
+    target.url = sanitizeText(source?.url, target.url);
+    target.host = sanitizeText(source?.host, target.host).toLowerCase();
+    target.path = sanitizeText(source?.path, target.path);
+    target.lastSeenAt = sourceSeenAt || target.lastSeenAt;
+  }
+}
+
 function isPersistedUsageData(value) {
   return isPlainObject(value) && isPlainObject(value.days);
 }
@@ -1068,7 +1170,8 @@ function cloneStoredItem(item) {
     audioIsMuted: Boolean(item.audioIsMuted),
     audioEndpointId: sanitizeText(item.audioEndpointId),
     audioSessionIdentifier: sanitizeText(item.audioSessionIdentifier),
-    audioSessionInstanceIdentifier: sanitizeText(item.audioSessionInstanceIdentifier)
+    audioSessionInstanceIdentifier: sanitizeText(item.audioSessionInstanceIdentifier),
+    pages: cloneStoredPageBuckets(item.pages)
   };
 }
 
@@ -1090,6 +1193,7 @@ function hasWebsiteMetadata(item) {
 
 function buildSiteEntry(item, inferredHost = '') {
   const normalizedUrl = normalizeUrl(item.url || '');
+  const trackingUrl = parseTrackingUrl(item.url || '');
   const rawHost = sanitizeText(inferredHost || item.host || normalizedUrl?.hostname || '');
   const rootDomain = getRootDomain(rawHost);
   if (!rootDomain) {
@@ -1109,18 +1213,29 @@ function buildSiteEntry(item, inferredHost = '') {
     windowTitle: sanitizeText(item.windowTitle, pageTitle || item.subtitle || rootDomain),
     url: sanitizeText(item.url),
     host: rootDomain,
-    path: sanitizeText(item.path, normalizedUrl?.pathname || '/'),
+    path: sanitizeText(item.path, getTrackingPath(trackingUrl || normalizedUrl)),
     executablePath: sanitizeText(item.executablePath),
     totalMs: Number(item.totalMs) || 0,
     hourly: ensureArray24(item.hourly),
     color: getColorFromKey(key),
-    lastSeenAt: Number(item.lastSeenAt) || 0
+    lastSeenAt: Number(item.lastSeenAt) || 0,
+    pages: cloneStoredPageBuckets(item.pages)
   };
 }
 
 function mergeStoredItems(target, source) {
   target.totalMs += Number(source.totalMs) || 0;
   target.hourly = target.hourly.map((value, index) => value + ((source.hourly && source.hourly[index]) || 0));
+  target.pages = cloneStoredPageBuckets(target.pages);
+
+  for (const page of Object.values(cloneStoredPageBuckets(source.pages))) {
+    if (!target.pages[page.key]) {
+      target.pages[page.key] = page;
+      continue;
+    }
+
+    mergeStoredPageBucket(target.pages[page.key], page);
+  }
 
   const sourceSeenAt = Number(source.lastSeenAt) || 0;
   const targetSeenAt = Number(target.lastSeenAt) || 0;
@@ -1923,6 +2038,8 @@ class UsageTracker {
     this.sortedDayKeysCache = [];
     this.sortedDayKeysDirty = true;
     this.saveChain = Promise.resolve();
+    this.pendingPoll = null;
+    this.pollRequestedWhilePending = false;
     this.manualPaused = false;
     this.manualPausedAt = 0;
     this.screenLocked = false;
@@ -2414,7 +2531,11 @@ class UsageTracker {
           }
 
           writeJson(200, { ok: true });
-          Promise.resolve(this.emitDataChanged()).catch(() => {});
+          if (request.url === BRIDGE_ENDPOINT_BROWSER_EVENT) {
+            Promise.resolve(this.pollActiveWindow()).catch(() => {});
+          } else {
+            Promise.resolve(this.emitDataChanged()).catch(() => {});
+          }
         } catch {
           writeJson(400, { ok: false });
         }
@@ -2431,6 +2552,25 @@ class UsageTracker {
   }
 
   async pollActiveWindow() {
+    if (this.pendingPoll) {
+      this.pollRequestedWhilePending = true;
+      return this.pendingPoll;
+    }
+
+    this.pendingPoll = (async () => {
+      do {
+        this.pollRequestedWhilePending = false;
+        await this.performPollActiveWindow();
+      } while (this.pollRequestedWhilePending);
+    })()
+      .finally(() => {
+        this.pendingPoll = null;
+      });
+
+    return this.pendingPoll;
+  }
+
+  async performPollActiveWindow() {
     const now = Date.now();
     const pauseStateChanged = this.syncIdlePauseState(now);
     if (!this.isForegroundTrackingPaused()) {
@@ -2499,6 +2639,7 @@ class UsageTracker {
           windowTitle,
           url: browserEvent.url,
           host: groupedDomain,
+          pageHost: browserEvent.host,
           path: browserEvent.path,
           label: browserEvent.displayName || groupedDomain,
           subtitle: browserEvent.pageTitle || groupedDomain,
@@ -2712,10 +2853,11 @@ class UsageTracker {
     const dayKey = getDayKey(date);
     const day = this.ensureDay(dayKey);
     const item = this.ensureItem(day, entry);
+    const bucketSeenAt = date.getTime() + durationMs;
 
     day.totalMs += durationMs;
     item.totalMs += durationMs;
-    item.lastSeenAt = Date.now();
+    item.lastSeenAt = Math.max(Number(item.lastSeenAt) || 0, bucketSeenAt);
     this.serializedDayCache.delete(dayKey);
 
     let remaining = durationMs;
@@ -2730,6 +2872,8 @@ class UsageTracker {
       remaining -= sliceMs;
       cursor = nextHour;
     }
+
+    this.applyPageDuration(item, entry, date, durationMs);
   }
 
   ensureDay(dayKey) {
@@ -2776,6 +2920,7 @@ class UsageTracker {
         audioSessionInstanceIdentifier: entry.audioSessionInstanceIdentifier,
         totalMs: 0,
         hourly: new Array(24).fill(0),
+        pages: {},
         color: entry.color,
         lastSeenAt: Date.now()
       };
@@ -2812,6 +2957,51 @@ class UsageTracker {
     item.audioSessionInstanceIdentifier = entry.audioSessionInstanceIdentifier || item.audioSessionInstanceIdentifier || '';
     item.color = entry.color;
     return item;
+  }
+
+  ensurePageBucket(item, entry) {
+    if (!item) {
+      return null;
+    }
+
+    const nextBucket = createPageBucketFromEntry(entry);
+    if (!nextBucket) {
+      return null;
+    }
+
+    if (!isPlainObject(item.pages)) {
+      item.pages = {};
+    }
+    if (!item.pages[nextBucket.key]) {
+      item.pages[nextBucket.key] = nextBucket;
+    } else {
+      mergeStoredPageBucket(item.pages[nextBucket.key], nextBucket);
+    }
+
+    return item.pages[nextBucket.key];
+  }
+
+  applyPageDuration(item, entry, date, durationMs) {
+    const pageBucket = this.ensurePageBucket(item, entry);
+    if (!pageBucket) {
+      return;
+    }
+
+    pageBucket.totalMs += durationMs;
+    pageBucket.lastSeenAt = Math.max(Number(pageBucket.lastSeenAt) || 0, date.getTime() + durationMs);
+
+    let remaining = durationMs;
+    let cursor = new Date(date);
+
+    while (remaining > 0) {
+      const hour = cursor.getHours();
+      const nextHour = new Date(cursor);
+      nextHour.setMinutes(60, 0, 0);
+      const sliceMs = Math.min(remaining, nextHour.getTime() - cursor.getTime());
+      pageBucket.hourly[hour] += sliceMs;
+      remaining -= sliceMs;
+      cursor = nextHour;
+    }
   }
 
   getSortedDayKeys() {
@@ -2948,6 +3138,7 @@ class UsageTracker {
     const currentDayKey = dayKeys[dayKeys.length - 1] || getDayKey(new Date());
     let latestItem = null;
     let todayHourly = new Array(24).fill(0);
+    const pageMap = new Map();
 
     for (const dayKey of dayKeys) {
       const item = this.data.days[dayKey].items[itemKey];
@@ -2956,6 +3147,31 @@ class UsageTracker {
         perDay.push({ dayKey, totalMs: item.totalMs });
         if (dayKey === currentDayKey) {
           todayHourly = [...item.hourly];
+        }
+
+        for (const page of Object.values(cloneStoredPageBuckets(item.pages))) {
+          const existingPage = pageMap.get(page.key);
+          if (!existingPage) {
+            pageMap.set(page.key, {
+              ...page,
+              todayMs: dayKey === currentDayKey ? page.totalMs : 0
+            });
+            continue;
+          }
+
+          existingPage.totalMs += page.totalMs;
+          existingPage.hourly = existingPage.hourly.map((value, index) => value + ((page.hourly && page.hourly[index]) || 0));
+          if (dayKey === currentDayKey) {
+            existingPage.todayMs += page.totalMs;
+          }
+          if ((Number(page.lastSeenAt) || 0) >= (Number(existingPage.lastSeenAt) || 0)) {
+            existingPage.label = page.label || existingPage.label;
+            existingPage.pageTitle = page.pageTitle || existingPage.pageTitle;
+            existingPage.url = page.url || existingPage.url;
+            existingPage.host = page.host || existingPage.host;
+            existingPage.path = page.path || existingPage.path;
+            existingPage.lastSeenAt = page.lastSeenAt || existingPage.lastSeenAt;
+          }
         }
       }
     }
@@ -2966,12 +3182,18 @@ class UsageTracker {
 
     const lastSevenDays = perDay.slice(-7);
     const totalMs = perDay.reduce((sum, day) => sum + day.totalMs, 0);
+    const pageBreakdown = [...pageMap.values()]
+      .sort((left, right) => (
+        right.totalMs - left.totalMs
+        || (Number(right.lastSeenAt) || 0) - (Number(left.lastSeenAt) || 0)
+      ));
 
     return {
       ...cloneItem(latestItem),
       totalMs,
       todayHourly,
       lastSevenDays,
+      pageBreakdown,
       averageMs: lastSevenDays.length
         ? Math.round(lastSevenDays.reduce((sum, day) => sum + day.totalMs, 0) / lastSevenDays.length)
         : 0

@@ -61,8 +61,9 @@
             0,
             0
           ],
+          "pages": {},
           "color": "#a855f7",
-          "lastSeenAt": 1774702093606
+          "lastSeenAt": 1774703108805
         },
         "music:qqmusic": {
           "key": "music:qqmusic",
@@ -122,8 +123,9 @@
             0,
             0
           ],
+          "pages": {},
           "color": "#06b6d4",
-          "lastSeenAt": 1774702093606
+          "lastSeenAt": 1774703108805
         }
       }
     }

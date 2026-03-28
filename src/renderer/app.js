@@ -88,6 +88,9 @@ const elements = {
   detailWeekChart: document.getElementById('detail-week-chart'),
   detailWeekTooltip: document.getElementById('detail-week-tooltip'),
   detailMeta: document.getElementById('detail-meta'),
+  detailPagesSection: document.getElementById('detail-pages-section'),
+  detailPagesSummary: document.getElementById('detail-pages-summary'),
+  detailPagesList: document.getElementById('detail-pages-list'),
   autoLaunchStatus: document.getElementById('auto-launch-status'),
   autoLaunchToggle: document.getElementById('auto-launch-toggle'),
   autoLaunchSwitch: document.getElementById('auto-launch-switch'),
@@ -852,6 +855,14 @@ function getDetailSubtitle(detail) {
   }
 
   return prependCategoryLabel(baseText, detail);
+}
+
+function getPageDrilldownTitle(page) {
+  return page.pageTitle || page.label || page.path || page.url || page.host || '页面';
+}
+
+function getPageDrilldownMeta(page) {
+  return page.path || page.url || page.host || '';
 }
 
 function getSettingsItemMeta(item) {
@@ -1704,6 +1715,61 @@ function renderOverview() {
   showScreen('overview');
 }
 
+function renderPageDrilldown(detail) {
+  if (!elements.detailPagesSection || !elements.detailPagesList || !elements.detailPagesSummary) {
+    return;
+  }
+
+  const pages = Array.isArray(detail?.pageBreakdown) ? detail.pageBreakdown : [];
+  const visiblePages = pages.slice(0, 12);
+  elements.detailPagesSection.hidden = !visiblePages.length;
+  elements.detailPagesList.replaceChildren();
+
+  if (!visiblePages.length) {
+    return;
+  }
+
+  elements.detailPagesSummary.textContent = pages.length > visiblePages.length
+    ? `显示前 ${visiblePages.length} 个页面`
+    : `共 ${pages.length} 个页面`;
+
+  visiblePages.forEach((page) => {
+    const row = document.createElement('div');
+    row.className = 'detail-page-item';
+
+    const copy = document.createElement('div');
+    copy.className = 'detail-page-copy';
+
+    const title = document.createElement('div');
+    title.className = 'detail-page-title';
+    title.textContent = getPageDrilldownTitle(page);
+
+    const meta = document.createElement('div');
+    meta.className = 'detail-page-meta';
+    meta.textContent = getPageDrilldownMeta(page);
+
+    const submeta = document.createElement('div');
+    submeta.className = 'detail-page-submeta';
+    submeta.textContent = page.todayMs
+      ? `今天 ${formatDuration(page.todayMs, 'short')} · 最近访问 ${formatDateTime(page.lastSeenAt)}`
+      : `最近访问 ${formatDateTime(page.lastSeenAt) || '未知'}`;
+
+    copy.appendChild(title);
+    if (meta.textContent) {
+      copy.appendChild(meta);
+    }
+    copy.appendChild(submeta);
+
+    const duration = document.createElement('div');
+    duration.className = 'detail-page-duration';
+    duration.textContent = formatDuration(page.totalMs, 'short');
+
+    row.appendChild(copy);
+    row.appendChild(duration);
+    elements.detailPagesList.appendChild(row);
+  });
+}
+
 function renderDetail() {
   const detail = state.detail;
   if (!detail) {
@@ -1770,6 +1836,8 @@ function renderDetail() {
       row.appendChild(valueNode);
       elements.detailMeta.appendChild(row);
     });
+
+  renderPageDrilldown(detail);
 
   drawBarChart({
     canvas: elements.detailDayChart,
