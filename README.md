@@ -1,44 +1,136 @@
-# App Usage Tracker
+<p align="center">
+  <img src="app.ico" width="96" alt="App Usage Tracker">
+</p>
 
-[中文说明](./README.zh-CN.md)
+<h1 align="center">App Usage Tracker</h1>
 
-App Usage Tracker is a Windows-focused desktop usage tracker built with Electron. It records foreground app time, can attribute browser usage to websites with a companion extension, and provides a local CLI plus AI-ready skill files for automation.
+<p align="center">
+  <strong>Local Windows usage tracking for apps, websites, and real music playback.</strong>
+</p>
 
-## Highlights
+<p align="center">
+  <a href="https://github.com/RACErace/app-usage-tracker/releases/latest">
+    <img src="https://img.shields.io/github/v/release/RACErace/app-usage-tracker?style=flat-square&color=blue" alt="Release">
+  </a>
+  <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/github/license/RACErace/app-usage-tracker?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/built%20with-Electron%2035%20%2B%20Node.js-47848F?style=flat-square" alt="Stack">
+</p>
 
-- Track foreground app usage time on Windows
-- Track actual music playback time with a hybrid SMTC + WASAPI detector, including background playback
-- Attribute browser time to websites when the browser extension is enabled
-- Aggregate web usage by root domain instead of individual URLs
-- Create custom service merge rules for desktop apps plus website domains
-- Apply category rules such as Work, Entertainment, Study, or Communication
-- View daily rankings, 7-day trends, and per-item detail pages
-- Run from the system tray and support launch at login
-- Query local usage data from the CLI
-- Ship AI skill files for tools such as OpenClaw, Codex, or similar assistants
+<p align="center">
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-Built-in service merge rules currently include:
+---
 
-- ChatGPT desktop app + `chatgpt.com`
-- bilibili desktop app + `bilibili.com`
+App Usage Tracker records which desktop app is active, which website is open in the browser, and whether a supported music player is actually playing. It turns those raw signals into daily rankings, 7-day trends, detail views, local backups, and a CLI you can query from scripts or AI tools.
 
-## How It Works
+- Attribute browser time to sites instead of only browser apps
+- Count actual music playback even when the player stays in the background
+- Merge desktop apps and domains into a single service when that better reflects how you work
+- Review the same dataset from the desktop UI, the CLI, and bundled AI skill files
+- Keep usage data and settings in local JSON files
 
-Windows can reliably identify the active application window, but not the full browser URL. To get website-level tracking, the project uses a desktop app plus browser extension workflow:
+> The bundled browser extension only posts active-tab metadata to the local bridge at `http://127.0.0.1:32123`. No cloud account is required.
 
-1. The desktop app detects the current foreground window.
-2. The browser extension sends the active tab title and URL to a local bridge.
-3. For music apps, the desktop app reads both Windows SMTC media sessions and WASAPI audio sessions.
-4. It fuses those signals to record actual playback time for the music app.
-5. The desktop app then combines all signals and records usage by app, site, or merged service.
+---
 
-Without the extension, browser usage is still tracked, but only at the browser app level.
+## What It Is
+
+It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker is a lightweight personal usage ledger for reviewing how time was actually spent on Windows.
+
+- Foreground app tracking with window-aware labeling
+- Website attribution through a companion browser extension
+- Hybrid SMTC + WASAPI detection for real music playback
+- Local automation via CLI queries and AI skill files
+- Backup, restore, and visibility controls for long-term use
+
+---
+
+## Core Capabilities
+
+### Tracking
+
+| Capability | What it does |
+|-----------|---------------|
+| Foreground app tracking | Detects the current active window and records usage per desktop app |
+| Website attribution | Attaches tab title, URL, domain, and route data to browser time when the extension is connected |
+| Root-domain aggregation | Groups browsing records by root domain so site stats stay readable |
+| Page drill-down | Preserves page-level buckets for detail views on tracked websites |
+| Music playback tracking | Combines Windows SMTC and WASAPI audio sessions to count actual playback time |
+
+### Review and Automation
+
+| Capability | What it does |
+|-----------|---------------|
+| Daily view | Shows totals, rankings, browser-recognition status, and hourly distribution for one day |
+| 7-day trends | Aggregates the last seven days and highlights weekly totals plus daily averages |
+| Item detail view | Displays today's hourly breakdown, recent-day history, metadata, and page breakdown where available |
+| Local CLI | Queries days, top items, searches, details, and full snapshots from local data |
+| AI skill files | Ships ready-to-use skills for Codex, OpenClaw, or similar assistants |
+
+### Control and Reliability
+
+| Capability | What it does |
+|-----------|---------------|
+| Custom service rules | Merges desktop apps and website domains into one logical service |
+| Category rules | Tags items as Work, Entertainment, Study, or Communication |
+| Visibility controls | Hides selected items from totals, rankings, searches, and snapshots |
+| Tracking protection | Supports manual pause, idle pause, and lock-screen pause |
+| Desktop behavior | Supports tray mode, auto-launch, close behavior, and light/dark/system themes |
+| Backup and recovery | Exports/imports JSON backups and can generate automatic local backups |
+
+---
+
+## Interface Preview
+
+### Daily Overview
+
+<img src="docs/使用统计-每天.png" alt="App Usage Tracker daily overview" />
+
+Daily mode is built for “what did today look like?”: total usage, visible-item count, browser extension status, ranking, and drill-down entry points all stay on one screen.
+
+### Last 7 Days
+
+<img src="docs/使用统计-近7天.png" alt="App Usage Tracker weekly overview" />
+
+Weekly mode rolls the last seven days into one view so it is easier to spot recurring tools, dominant websites, and overall usage rhythm.
+
+### Settings
+
+<img src="docs/设置.png" alt="App Usage Tracker settings" />
+
+Settings centralize tray behavior, startup, pause rules, service/category rules, backup flow, item visibility, theme preference, and browser-extension status.
+
+---
+
+## How Tracking Works
+
+Windows can reliably tell the app which window is in the foreground, but website-level attribution needs browser help. The project therefore uses a desktop app plus local extension bridge:
+
+1. The desktop app polls the current foreground window.
+2. The browser extension sends active-tab title and URL metadata to a localhost bridge.
+3. Music tracking reads Windows SMTC media sessions and WASAPI audio sessions.
+4. The tracker merges those signals into app, site, or merged-service entries.
+5. The UI and CLI both read from the same local dataset.
 
 Notes:
 
-- Music playback time primarily comes from Windows SMTC (System Media Transport Controls) and uses WASAPI audio sessions as a fallback for players that do not expose usable SMTC metadata.
-- Playback time can overlap with another foreground app, so per-item totals can differ from pure foreground-window time.
-- Apps that expose neither usable SMTC nor an active WASAPI session fall back to regular foreground-window tracking.
+- Without the extension, browser usage is still tracked, but only at the browser-app level.
+- Music playback can overlap with another foreground app, so a music item's total can differ from pure foreground-window time.
+- Players that expose neither usable SMTC metadata nor an active WASAPI session fall back to regular foreground tracking.
+
+---
+
+## Screens
+
+| Screen | Purpose |
+|-------|---------|
+| Overview | Daily and 7-day charts, rankings, current totals, and browser-extension status |
+| Detail | Hourly breakdown, recent-day history, metadata, and page breakdown for tracked sites |
+| Settings | Startup, tray behavior, pause rules, backup, visibility, theme, service rules, and category rules |
+
+---
 
 ## Requirements
 
@@ -47,29 +139,56 @@ Notes:
 - npm
 - Visual Studio 2022 Build Tools with `Desktop development with C++` if you want to build Windows packages locally
 
-## Quick Start
+---
 
-Install dependencies:
+## Installation
+
+Download the latest build from [Releases](https://github.com/RACErace/app-usage-tracker/releases/latest).
+
+| Package | Format |
+|--------|--------|
+| Installer | `.exe` (NSIS) |
+| Portable | `.exe` |
+
+### Quick Start From Source
 
 ```powershell
 npm install
-```
-
-Start the packaged-style detached app:
-
-```powershell
 npm start
-```
-
-Start with foreground logs for development:
-
-```powershell
 npm run start:dev
 ```
 
+- `npm start` launches the detached packaged-style app
+- `npm run start:dev` keeps Electron in the foreground for debugging
+
+---
+
+## Browser Extension
+
+The Chromium-compatible extension lives in [`browser-extension`](./browser-extension).
+
+To load it in Chrome, Edge, Brave, or Opera:
+
+1. Open the browser extensions page
+2. Enable developer mode
+3. Choose `Load unpacked`
+4. Select the `browser-extension` directory from this repository
+
+The extension posts active-tab metadata to:
+
+```text
+http://127.0.0.1:32123/v1/browser-event
+```
+
+If the desktop app stops receiving extension heartbeats, the UI shows that the browser extension is currently not connected.
+
+Firefox support is limited; the bundled extension is implemented primarily for Chromium-style extension APIs.
+
+---
+
 ## CLI
 
-The repository includes a local CLI at `src/cli/query.js`.
+The local CLI lives at `src/cli/query.js`.
 
 From the repository:
 
@@ -78,6 +197,7 @@ npm run query -- days --format json
 npm run query -- top --range day --day latest --limit 10 --format json
 npm run query -- search --query "ChatGPT" --format json
 npm run query -- detail --key service:chatgpt --format json
+npm run query -- snapshot --format json
 ```
 
 From an installed Windows build:
@@ -101,96 +221,69 @@ Supported data-location overrides:
 - `--user-data-dir <dir>`
 - `APP_USAGE_TRACKER_USER_DATA_DIR`
 
-## Browser Extension
-
-The repository contains a Chromium-compatible extension in [`browser-extension`](./browser-extension).
-
-To load it in Chrome, Edge, Brave, or Opera:
-
-1. Open the browser extensions page
-2. Enable developer mode
-3. Choose `Load unpacked`
-4. Select the `browser-extension` directory from this repository
-
-The extension reports active tab metadata to:
-
-```text
-http://127.0.0.1:32123/v1/browser-event
-```
-
-If the desktop app stops receiving extension heartbeats for a while, the UI shows a warning that the browser extension is not currently connected.
+---
 
 ## AI Skill Files
 
-The project includes AI skill files in [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) so assistants can query local usage data through the CLI.
+The repository includes AI skill files in [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) so assistants can query local usage data through the CLI.
 
-The GitHub Release workflow also publishes a `skills.zip` asset alongside the app packages.
+The GitHub Release workflow also publishes a `skills.zip` asset alongside Windows packages.
+
+---
 
 ## Data Locations
 
 By default the app stores data under `%APPDATA%\app-usage-tracker\`:
 
-- Usage data: `usage-data.json`
-- App settings: `settings.json`
-- Icon cache: `icon-cache\`
+- `usage-data.json`: usage records
+- `settings.json`: app settings and rule configuration
+- `backups\`: automatic backup directory
+- `icon-cache\`: cached icons
 
-## Packaging
+---
 
-Build an unpacked app:
+## Development
 
 ```powershell
+npm install
+npm run start:dev
+npm test
 npm run pack
-```
-
-Build Windows release packages:
-
-```powershell
 npm run dist
 ```
 
-Additional package commands:
+Useful package commands:
 
 ```powershell
 npm run dist:portable
 npm run dist:installer
 ```
 
-Typical outputs:
+Project layout:
 
-- NSIS installer
-- Portable Windows executable
-- Browser extension zip
-- Skills zip
+| Path | Purpose |
+|------|---------|
+| `src/main` | Electron main process, tracking, storage, bridge, icons, and backup logic |
+| `src/renderer` | Desktop UI |
+| `src/cli` | Local query CLI |
+| `browser-extension` | Browser bridge extension |
+| `skills` | AI skill files |
+| `scripts` | Helper scripts |
+| `test` | Automated tests |
 
-## GitHub Actions and Releases
+The repository includes a Windows build workflow at [`.github/workflows/build-windows.yml`](./.github/workflows/build-windows.yml). Pushes to `main` build Windows artifacts, and tags matching `v*` also create a GitHub Release that uploads installer, portable, browser-extension, and skill bundles.
 
-The repository includes a Windows build workflow at `.github/workflows/build-windows.yml`.
-
-On pushes to `main`, it builds Windows artifacts.
-On tags matching `v*`, it also creates a GitHub Release and uploads:
-
-- `App-Usage-Tracker-<version>-installer.exe`
-- `App-Usage-Tracker-<version>-portable.exe`
-- `App-Usage-Tracker-<version>-browser-extension.zip`
-- `App-Usage-Tracker-<version>-skills.zip`
-
-## Project Structure
-
-- `src/main`: Electron main-process code
-- `src/renderer`: renderer UI
-- `src/cli`: local query CLI
-- `browser-extension`: browser bridge extension
-- `skills`: AI skill files
-- `scripts`: helper scripts
-- `test`: automated tests
+---
 
 ## Limitations
 
 - The project currently focuses on Windows
-- Firefox support is limited; the bundled extension is implemented for Chromium-style extension APIs
-- Service merging and categorization depend on the rules you configure; unmatched items stay as regular apps or sites
-- Direct favicon or raw asset URLs may occasionally appear as recent web entries
-- Music playback tracking still depends on the player exposing a recognizable SMTC or WASAPI session; browser-based web players are not tracked as separate music apps
+- Browser site attribution is best with the bundled extension; without it, browser time falls back to the browser app itself
+- Service merging and categorization depend on the rules you configure
+- Some favicon or raw asset URLs may occasionally appear as recent web entries
+- Browser-based web players are not tracked as standalone music apps
+
+---
 
 ## License
 
