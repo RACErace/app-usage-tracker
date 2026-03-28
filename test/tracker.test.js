@@ -1,9 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const { getBackupFilePath } = require('../src/main/json-storage');
 const {
   BRIDGE_SHARED_HEADER_NAME,
   BRIDGE_SHARED_HEADER_VALUE,
@@ -11,6 +14,53 @@ const {
   migrateUsageData,
   __testables
 } = require('../src/main/tracker');
+
+function createPersistedUsageData(label = 'Notepad') {
+  return {
+    version: 3,
+    days: {
+      '2026-03-25': {
+        totalMs: 120000,
+        items: {
+          'app:notepad': {
+            key: 'app:notepad',
+            kind: 'app',
+            label,
+            subtitle: `${label} Window`,
+            appName: label,
+            browserFamily: null,
+            pageTitle: '',
+            windowTitle: `${label} Window`,
+            url: '',
+            host: '',
+            path: '',
+            executablePath: 'C:\\Windows\\notepad.exe',
+            trackingMode: 'foreground',
+            trackingSource: 'foreground',
+            sourceAppUserModelId: '',
+            mediaTitle: '',
+            mediaArtist: '',
+            mediaAlbumTitle: '',
+            playbackStatus: '',
+            playbackType: '',
+            processId: 0,
+            processName: '',
+            audioSessionState: '',
+            audioPeakValue: 0,
+            audioIsMuted: false,
+            audioEndpointId: '',
+            audioSessionIdentifier: '',
+            audioSessionInstanceIdentifier: '',
+            totalMs: 120000,
+            hourly: new Array(24).fill(0),
+            color: '#1c8cff',
+            lastSeenAt: 1
+          }
+        }
+      }
+    }
+  };
+}
 
 test('getDayKey uses local calendar date instead of UTC date', () => {
   const script = `
@@ -387,5 +437,79 @@ test('snapshot meta exposes browser extension status for renderer prompts', () =
     assert.deepEqual(snapshot.meta.browserExtensionStatus.activeBrowsers, ['Chrome']);
   } finally {
     Date.now = originalNow;
+  }
+});
+
+test('usage tracker restores from backup when primary file is structurally invalid', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'usage-tracker-recover-'));
+  const dataFilePath = path.join(tempDir, 'usage-data.json');
+
+  try {
+    const tracker = new UsageTracker({
+      userDataPath: tempDir,
+      onDataChanged: null
+    });
+
+    tracker.data = createPersistedUsageData('Original Record');
+    await tracker.save();
+
+    const backupFilePath = getBackupFilePath(dataFilePath);
+    const backupContent = JSON.parse(await fs.readFile(backupFilePath, 'utf8'));
+    assert.equal(backupContent.days['2026-03-25'].items['app:notepad'].label, 'Original Record');
+
+    await fs.writeFile(dataFilePath, '{}', 'utf8');
+
+    const recoveredTracker = new UsageTracker({
+      userDataPath: tempDir,
+      onDataChanged: null
+    });
+
+    await recoveredTracker.load();
+
+    assert.equal(recoveredTracker.data.days['2026-03-25'].items['app:notepad'].label, 'Original Record');
+
+    const files = await fs.readdir(tempDir);
+    assert.equal(files.some((fileName) => fileName.startsWith('usage-data.json.corrupt-')), true);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('usage tracker serializes concurrent saves so newer snapshots cannot be overwritten by older writes', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'usage-tracker-save-'));
+  const originalWriteFile = fs.writeFile;
+
+  try {
+    fs.writeFile = async (filePath, content, ...rest) => {
+      if (
+        typeof filePath === 'string'
+        && filePath.endsWith('.tmp')
+        && typeof content === 'string'
+        && content.includes('"First Snapshot"')
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+
+      return originalWriteFile.call(fs, filePath, content, ...rest);
+    };
+
+    const tracker = new UsageTracker({
+      userDataPath: tempDir,
+      onDataChanged: null
+    });
+
+    tracker.data = createPersistedUsageData('First Snapshot');
+    const firstSave = tracker.save();
+
+    tracker.data = createPersistedUsageData('Second Snapshot');
+    const secondSave = tracker.save();
+
+    await Promise.all([firstSave, secondSave]);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(tempDir, 'usage-data.json'), 'utf8'));
+    assert.equal(persisted.days['2026-03-25'].items['app:notepad'].label, 'Second Snapshot');
+  } finally {
+    fs.writeFile = originalWriteFile;
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 });

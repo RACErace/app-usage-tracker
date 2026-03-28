@@ -7,6 +7,7 @@ const {
   calculateNextAutoBackupAt
 } = require('./auto-backup');
 const { buildBackupPayload, parseBackupPayload, getDefaultBackupFileName } = require('./backup');
+const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = require('./json-storage');
 const { UsageTracker } = require('./tracker');
 const { UsageIconService } = require('./icon-service');
 
@@ -41,6 +42,7 @@ let isShuttingDown = false;
 let autoBackupTimer = null;
 let autoBackupInFlight = null;
 let lastAutoBackupError = '';
+let appSettingsSaveChain = Promise.resolve();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -87,6 +89,10 @@ function normalizeHiddenItemKeys(hiddenItemKeys) {
   }
 
   return [...new Set(hiddenItemKeys.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizeCloseWindowAction(value) {
@@ -143,24 +149,56 @@ function getSettingsPayload() {
 }
 
 async function loadAppSettings() {
-  try {
-    const rawSettings = await fs.readFile(getSettingsFilePath(), 'utf8');
-    const parsed = JSON.parse(rawSettings);
-    appSettings = {
-      hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
-      closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction),
-      autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
-      autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
-      lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : ''
-    };
-  } catch {
-    appSettings = { ...DEFAULT_APP_SETTINGS };
+  const loaded = await loadJsonFileWithRecovery(getSettingsFilePath(), {
+    validate: isPlainObject,
+    defaultValue: () => ({})
+  });
+  const parsed = loaded.value;
+  appSettings = {
+    hiddenItemKeys: normalizeHiddenItemKeys(parsed?.hiddenItemKeys),
+    closeWindowAction: normalizeCloseWindowAction(parsed?.closeWindowAction),
+    autoBackupEnabled: Boolean(parsed?.autoBackupEnabled),
+    autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(parsed?.autoBackupIntervalMinutes),
+    lastAutoBackupAt: typeof parsed?.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt.trim() : ''
+  };
+
+  if (loaded.recoveredFromBackup) {
+    const recoveryDetail = loaded.corruptedPrimaryPath
+      ? ` 已隔离损坏文件到 ${loaded.corruptedPrimaryPath}。`
+      : '';
+    console.error(`设置文件缺失或损坏，已从备份副本恢复。${recoveryDetail}`);
+    if (loaded.restoreError) {
+      console.error('恢复设置主文件失败，将在下次保存时重建主文件:', loaded.restoreError);
+    }
+  } else if (loaded.source === 'default' && loaded.primaryError && loaded.primaryError.code !== 'ENOENT') {
+    const recoveryDetail = loaded.corruptedPrimaryPath
+      ? ` 已将损坏文件隔离到 ${loaded.corruptedPrimaryPath}。`
+      : '';
+    console.error(`设置文件无法读取，已回退到默认设置。${recoveryDetail}`, loaded.primaryError);
+    if (loaded.backupError && loaded.backupError.code !== 'ENOENT') {
+      console.error('设置备份副本也无法恢复:', loaded.backupError);
+    }
   }
 }
 
 async function saveAppSettings() {
-  await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(getSettingsFilePath(), JSON.stringify(appSettings, null, 2), 'utf8');
+  const serializedSnapshot = JSON.stringify({
+    hiddenItemKeys: [...appSettings.hiddenItemKeys],
+    closeWindowAction: appSettings.closeWindowAction,
+    autoBackupEnabled: Boolean(appSettings.autoBackupEnabled),
+    autoBackupIntervalMinutes: normalizeAutoBackupIntervalMinutes(appSettings.autoBackupIntervalMinutes),
+    lastAutoBackupAt: typeof appSettings.lastAutoBackupAt === 'string' ? appSettings.lastAutoBackupAt : ''
+  }, null, 2);
+
+  appSettingsSaveChain = appSettingsSaveChain
+    .catch(() => {})
+    .then(async () => {
+      const writeResult = await writeFileAtomic(getSettingsFilePath(), serializedSnapshot);
+      if (writeResult.backupError) {
+        console.error('设置已保存，但未能同步恢复副本:', writeResult.backupError);
+      }
+    });
+  return appSettingsSaveChain;
 }
 
 function notifySettingsChanged() {
@@ -209,8 +247,7 @@ async function writeBackupFile(targetFilePath) {
     exportedAt
   });
 
-  await fs.mkdir(path.dirname(targetFilePath), { recursive: true });
-  await fs.writeFile(targetFilePath, JSON.stringify(backupPayload, null, 2), 'utf8');
+  await writeJsonFileAtomic(targetFilePath, backupPayload, { keepBackup: false });
   return {
     filePath: targetFilePath,
     exportedAt

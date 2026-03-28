@@ -1,9 +1,9 @@
-const fs = require('fs/promises');
 const path = require('path');
 const http = require('http');
 const { execFile, fork } = require('child_process');
 const { promisify } = require('util');
 const { getDomain } = require('tldts');
+const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = require('./json-storage');
 
 const DATA_VERSION = 3;
 const POLL_INTERVAL_MS = 5000;
@@ -872,6 +872,14 @@ function createEmptyData() {
   return { version: DATA_VERSION, days: {} };
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPersistedUsageData(value) {
+  return isPlainObject(value) && isPlainObject(value.days);
+}
+
 function cloneStoredItem(item) {
   return {
     ...item,
@@ -1688,16 +1696,16 @@ function migrateUsageData(rawData) {
 }
 
 async function migrateUsageDataFile(filePath) {
-  let parsed;
-  try {
-    parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
-  } catch {
-    return { data: createEmptyData(), changed: false };
-  }
+  const loaded = await loadJsonFileWithRecovery(filePath, {
+    validate: isPersistedUsageData,
+    defaultValue: () => createEmptyData()
+  });
+
+  const parsed = loaded.value;
 
   const migrated = migrateUsageData(parsed);
-  if (migrated.changed) {
-    await fs.writeFile(filePath, JSON.stringify(migrated.data, null, 2), 'utf8');
+  if (migrated.changed || loaded.recoveredFromBackup) {
+    await writeJsonFileAtomic(filePath, migrated.data);
   }
 
   return migrated;
@@ -1720,6 +1728,7 @@ class UsageTracker {
     this.serializedDayCache = new Map();
     this.sortedDayKeysCache = [];
     this.sortedDayKeysDirty = true;
+    this.saveChain = Promise.resolve();
   }
 
   async init() {
@@ -1753,18 +1762,35 @@ class UsageTracker {
   }
 
   async load() {
-    try {
-      const fileContent = await fs.readFile(this.dataFilePath, 'utf8');
-      const parsed = JSON.parse(fileContent);
-      const migrated = migrateUsageData(parsed);
-      this.data = migrated.data;
-      this.resetDerivedCaches();
-      if (migrated.changed) {
-        await this.save();
+    const loaded = await loadJsonFileWithRecovery(this.dataFilePath, {
+      validate: isPersistedUsageData,
+      defaultValue: () => createEmptyData()
+    });
+
+    const migrated = migrateUsageData(loaded.value);
+    this.data = migrated.data;
+    this.resetDerivedCaches();
+
+    if (loaded.recoveredFromBackup) {
+      const recoveryDetail = loaded.corruptedPrimaryPath
+        ? ` 已隔离损坏文件到 ${loaded.corruptedPrimaryPath}。`
+        : '';
+      console.error(`使用统计主文件缺失或损坏，已从备份副本恢复。${recoveryDetail}`);
+      if (loaded.restoreError) {
+        console.error('恢复主文件副本失败，将在下次保存时重建主文件:', loaded.restoreError);
       }
-    } catch {
-      this.data = createEmptyData();
-      this.resetDerivedCaches();
+    } else if (loaded.source === 'default' && loaded.primaryError && loaded.primaryError.code !== 'ENOENT') {
+      const recoveryDetail = loaded.corruptedPrimaryPath
+        ? ` 已将损坏文件隔离到 ${loaded.corruptedPrimaryPath}。`
+        : '';
+      console.error(`使用统计主文件无法读取，已改为使用空数据启动。${recoveryDetail}`, loaded.primaryError);
+      if (loaded.backupError && loaded.backupError.code !== 'ENOENT') {
+        console.error('备份副本也无法恢复:', loaded.backupError);
+      }
+    }
+
+    if (migrated.changed) {
+      await this.save();
     }
   }
 
@@ -1774,7 +1800,9 @@ class UsageTracker {
     }
 
     this.saveTimer = setTimeout(() => {
-      this.save().catch(() => {});
+      this.save().catch((error) => {
+        console.error('保存使用统计失败:', error);
+      });
     }, SAVE_DEBOUNCE_MS);
   }
 
@@ -1784,8 +1812,16 @@ class UsageTracker {
       this.saveTimer = null;
     }
 
-    await fs.mkdir(this.userDataPath, { recursive: true });
-    await fs.writeFile(this.dataFilePath, JSON.stringify(this.data, null, 2), 'utf8');
+    const serializedSnapshot = JSON.stringify(this.data, null, 2);
+    this.saveChain = this.saveChain
+      .catch(() => {})
+      .then(async () => {
+        const writeResult = await writeFileAtomic(this.dataFilePath, serializedSnapshot);
+        if (writeResult.backupError) {
+          console.error('使用统计已保存，但未能同步恢复副本:', writeResult.backupError);
+        }
+      });
+    return this.saveChain;
   }
 
   async flush() {
