@@ -3,9 +3,15 @@ const http = require('http');
 const { execFile, fork } = require('child_process');
 const { promisify } = require('util');
 const { getDomain } = require('tldts');
+const {
+  getCategoryLabel,
+  normalizeCategoryId,
+  normalizeCategoryRules,
+  normalizeCustomServiceRules
+} = require('./customization');
 const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = require('./json-storage');
 
-const DATA_VERSION = 3;
+const DATA_VERSION = 4;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
 const BROWSER_EVENT_TTL_MS = 65000;
@@ -541,7 +547,7 @@ function humanizeMusicAppName(value) {
   return spaced || rawValue;
 }
 
-const SERVICE_PROFILES = [
+const BUILTIN_SERVICE_PROFILE_DEFINITIONS = [
   {
     id: 'chatgpt',
     displayLabel: 'ChatGPT',
@@ -556,11 +562,7 @@ const SERVICE_PROFILES = [
     appNames: ['bilibili', '哔哩哔哩'],
     executables: ['bilibili.exe']
   }
-].map((profile) => ({
-  ...profile,
-  appTokens: profile.appNames.map((value) => normalizeComparableToken(value)).filter(Boolean),
-  executableTokens: profile.executables.map((value) => normalizeComparableToken(value)).filter(Boolean)
-}));
+];
 
 const MUSIC_APP_PROFILES = [
   {
@@ -656,47 +658,178 @@ function findMusicAppProfile(entry) {
   })) || null;
 }
 
-function findServiceProfile(entry) {
+function buildMatcherTokens(values) {
+  const tokens = new Set();
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = sanitizeText(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const comparableToken = normalizeComparableToken(stripExecutableExtension(normalized));
+    if (comparableToken) {
+      tokens.add(comparableToken);
+    }
+
+    const executableToken = getExecutableToken(normalized);
+    if (executableToken) {
+      tokens.add(executableToken);
+    }
+
+    const executableNameToken = normalizeComparableToken(stripExecutableExtension(getExecutableName(normalized)));
+    if (executableNameToken) {
+      tokens.add(executableNameToken);
+    }
+  }
+
+  return [...tokens];
+}
+
+function buildDomainMatchers(values) {
+  const domains = new Set();
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalizedValue = sanitizeText(value);
+    const normalizedDomain = getRootDomain(normalizeUrl(normalizedValue)?.hostname || normalizedValue);
+    if (normalizedDomain) {
+      domains.add(normalizedDomain);
+    }
+  }
+
+  return [...domains];
+}
+
+function compileServiceProfile(profile, { isCustom = false } = {}) {
+  const normalizedId = toIdSegment(sanitizeText(profile.id || profile.displayLabel || 'service'));
+  return {
+    id: normalizedId,
+    key: isCustom ? `service:custom:${normalizedId}` : `service:${normalizedId}`,
+    displayLabel: sanitizeText(profile.displayLabel, '服务'),
+    domains: buildDomainMatchers(profile.domains),
+    matcherTokens: buildMatcherTokens([
+      ...(Array.isArray(profile.appNames) ? profile.appNames : []),
+      ...(Array.isArray(profile.executables) ? profile.executables : [])
+    ])
+  };
+}
+
+function compileCustomServiceRule(rule) {
+  return compileServiceProfile({
+    id: sanitizeText(rule.id, 'service'),
+    displayLabel: sanitizeText(rule.serviceName),
+    domains: rule.domains,
+    appNames: rule.appMatchers,
+    executables: rule.appMatchers
+  }, { isCustom: true });
+}
+
+function compileCategoryRule(rule) {
+  const categoryId = normalizeCategoryId(rule.categoryId);
+  return {
+    id: toIdSegment(sanitizeText(rule.id || categoryId || 'category')),
+    categoryId,
+    categoryLabel: getCategoryLabel(categoryId),
+    domains: buildDomainMatchers(rule.domains),
+    matcherTokens: buildMatcherTokens(rule.appMatchers)
+  };
+}
+
+function createRuleConfig(ruleSettings = {}) {
+  const customServiceProfiles = normalizeCustomServiceRules(ruleSettings.customServiceRules)
+    .map((rule) => compileCustomServiceRule(rule))
+    .filter((rule) => rule.displayLabel && (rule.domains.length || rule.matcherTokens.length));
+  const categoryRules = normalizeCategoryRules(ruleSettings.categoryRules)
+    .map((rule) => compileCategoryRule(rule))
+    .filter((rule) => rule.categoryId && (rule.domains.length || rule.matcherTokens.length));
+
+  return {
+    serviceProfiles: [
+      ...customServiceProfiles,
+      ...BUILTIN_SERVICE_PROFILE_DEFINITIONS.map((profile) => compileServiceProfile(profile))
+    ],
+    categoryRules
+  };
+}
+
+const DEFAULT_RULE_CONFIG = createRuleConfig();
+
+function buildEntryMatchContext(entry) {
+  const normalizedUrl = normalizeUrl(entry.url || '');
+  return {
+    rootDomain: getRootDomain(entry.host || normalizedUrl?.hostname || ''),
+    tokens: new Set([
+      normalizeComparableToken(entry.appName),
+      normalizeComparableToken(entry.label),
+      normalizeComparableToken(entry.processName),
+      normalizeComparableToken(entry.displayName),
+      getExecutableToken(entry.executablePath),
+      getExecutableToken(entry.sourceAppUserModelId),
+      getSourceAppUserModelIdToken(entry.sourceAppUserModelId)
+    ].filter(Boolean))
+  };
+}
+
+function matchesCompiledRule(rule, matchContext) {
+  if (!rule || !matchContext) {
+    return false;
+  }
+
+  if (matchContext.rootDomain && rule.domains.includes(matchContext.rootDomain)) {
+    return true;
+  }
+
+  return rule.matcherTokens.some((token) => matchContext.tokens.has(token));
+}
+
+function findServiceProfile(entry, ruleConfig = DEFAULT_RULE_CONFIG) {
   if (!entry) {
     return null;
   }
 
-  const normalizedUrl = normalizeUrl(entry.url || '');
-  const rootDomain = getRootDomain(entry.host || normalizedUrl?.hostname || '');
-  const tokens = new Set([
-    normalizeComparableToken(entry.appName),
-    normalizeComparableToken(entry.label),
-    normalizeComparableToken(getExecutableName(entry.executablePath))
-  ].filter(Boolean));
-
-  return SERVICE_PROFILES.find((profile) => {
-    if (rootDomain && profile.domains.includes(rootDomain)) {
-      return true;
-    }
-
-    return profile.appTokens.some((token) => tokens.has(token))
-      || profile.executableTokens.some((token) => tokens.has(token));
-  }) || null;
+  const matchContext = buildEntryMatchContext(entry);
+  return (ruleConfig?.serviceProfiles || DEFAULT_RULE_CONFIG.serviceProfiles).find((profile) => (
+    matchesCompiledRule(profile, matchContext)
+  )) || null;
 }
 
-function canonicalizeEntry(entry) {
-  const profile = findServiceProfile(entry);
-  if (!profile) {
-    return entry;
+function findCategoryRule(entry, ruleConfig = DEFAULT_RULE_CONFIG) {
+  if (!entry) {
+    return null;
   }
 
-  const key = `service:${profile.id}`;
-  const isBrowserBacked = isBrowserApp(entry.appName) || Boolean(entry.browserFamily);
+  const matchContext = buildEntryMatchContext(entry);
+  return (ruleConfig?.categoryRules || DEFAULT_RULE_CONFIG.categoryRules).find((rule) => (
+    matchesCompiledRule(rule, matchContext)
+  )) || null;
+}
+
+function applyCategoryRule(entry, ruleConfig = DEFAULT_RULE_CONFIG) {
+  const categoryRule = findCategoryRule(entry, ruleConfig);
   return {
     ...entry,
-    key,
+    categoryId: categoryRule?.categoryId || '',
+    categoryLabel: categoryRule?.categoryLabel || ''
+  };
+}
+
+function canonicalizeEntry(entry, ruleConfig = DEFAULT_RULE_CONFIG) {
+  const profile = findServiceProfile(entry, ruleConfig);
+  if (!profile) {
+    return applyCategoryRule(entry, ruleConfig);
+  }
+
+  const isBrowserBacked = isBrowserApp(entry.appName) || Boolean(entry.browserFamily);
+  return applyCategoryRule({
+    ...entry,
+    key: profile.key,
     kind: 'service',
     label: profile.displayLabel,
     appName: profile.displayLabel,
     host: sanitizeText(entry.host, profile.domains[0] || ''),
     executablePath: isBrowserBacked ? '' : sanitizeText(entry.executablePath),
-    color: getColorFromKey(key)
-  };
+    color: getColorFromKey(profile.key)
+  }, ruleConfig);
 }
 
 function cloneItem(item) {
@@ -886,6 +1019,8 @@ function cloneStoredItem(item) {
     hourly: ensureArray24(item.hourly),
     totalMs: Number(item.totalMs) || 0,
     lastSeenAt: Number(item.lastSeenAt) || 0,
+    categoryId: normalizeCategoryId(item.categoryId),
+    categoryLabel: sanitizeText(item.categoryLabel || getCategoryLabel(item.categoryId)),
     trackingMode: sanitizeText(item.trackingMode),
     trackingSource: sanitizeText(item.trackingSource),
     sourceAppUserModelId: sanitizeText(item.sourceAppUserModelId),
@@ -968,6 +1103,8 @@ function mergeStoredItems(target, source) {
     target.host = source.host || target.host;
     target.path = source.path || target.path;
     target.executablePath = source.executablePath || target.executablePath;
+    target.categoryId = normalizeCategoryId(source.categoryId) || target.categoryId || '';
+    target.categoryLabel = source.categoryLabel || target.categoryLabel || getCategoryLabel(target.categoryId);
     target.trackingMode = source.trackingMode || target.trackingMode;
     target.trackingSource = source.trackingSource || target.trackingSource;
     target.sourceAppUserModelId = source.sourceAppUserModelId || target.sourceAppUserModelId;
@@ -1611,7 +1748,7 @@ function inferSiteHostFromTitle(item, siteCandidates) {
   return bestCandidate ? bestCandidate.host : '';
 }
 
-function migrateDay(day) {
+function migrateDay(day, ruleConfig = DEFAULT_RULE_CONFIG) {
   const sourceItems = Object.values(day?.items || {}).map((item) => cloneStoredItem(item));
   const nextItems = {};
   let changed = false;
@@ -1620,18 +1757,29 @@ function migrateDay(day) {
     if (isBrowserUsageItem(item) && hasWebsiteMetadata(item)) {
       const siteItem = buildSiteEntry(item);
       if (siteItem) {
-        const canonicalItem = canonicalizeEntry(siteItem);
+        const canonicalItem = canonicalizeEntry(siteItem, ruleConfig);
         mergeIntoMap(nextItems, canonicalItem);
-        if (item.key !== canonicalItem.key || item.kind !== canonicalItem.kind || item.host !== canonicalItem.host || item.label !== canonicalItem.label) {
+        if (
+          item.key !== canonicalItem.key
+          || item.kind !== canonicalItem.kind
+          || item.host !== canonicalItem.host
+          || item.label !== canonicalItem.label
+          || normalizeCategoryId(item.categoryId) !== canonicalItem.categoryId
+        ) {
           changed = true;
         }
         continue;
       }
     }
 
-    const canonicalItem = canonicalizeEntry(item);
+    const canonicalItem = canonicalizeEntry(item, ruleConfig);
     mergeIntoMap(nextItems, canonicalItem);
-    if (canonicalItem.key !== item.key || canonicalItem.kind !== item.kind || canonicalItem.label !== item.label) {
+    if (
+      canonicalItem.key !== item.key
+      || canonicalItem.kind !== item.kind
+      || canonicalItem.label !== item.label
+      || normalizeCategoryId(item.categoryId) !== canonicalItem.categoryId
+    ) {
       changed = true;
     }
   }
@@ -1659,7 +1807,7 @@ function migrateDay(day) {
       continue;
     }
 
-    const canonicalItem = canonicalizeEntry(siteItem);
+    const canonicalItem = canonicalizeEntry(siteItem, ruleConfig);
 
     delete nextItems[item.key];
     mergeIntoMap(nextItems, canonicalItem);
@@ -1678,13 +1826,13 @@ function migrateDay(day) {
   };
 }
 
-function migrateUsageData(rawData) {
+function migrateUsageData(rawData, { ruleConfig = DEFAULT_RULE_CONFIG } = {}) {
   const parsed = rawData && typeof rawData === 'object' ? rawData : {};
   const result = createEmptyData();
   let changed = Number(parsed.version) !== DATA_VERSION;
 
   for (const [dayKey, day] of Object.entries(parsed.days || {})) {
-    const migratedDay = migrateDay(day);
+    const migratedDay = migrateDay(day, ruleConfig);
     result.days[dayKey] = {
       totalMs: migratedDay.totalMs,
       items: migratedDay.items
@@ -1712,10 +1860,15 @@ async function migrateUsageDataFile(filePath) {
 }
 
 class UsageTracker {
-  constructor({ userDataPath, onDataChanged }) {
+  constructor({ userDataPath, onDataChanged, ruleSettings = {} }) {
     this.userDataPath = userDataPath;
     this.onDataChanged = onDataChanged;
     this.dataFilePath = path.join(userDataPath, 'usage-data.json');
+    this.ruleSettings = {
+      customServiceRules: normalizeCustomServiceRules(ruleSettings.customServiceRules),
+      categoryRules: normalizeCategoryRules(ruleSettings.categoryRules)
+    };
+    this.ruleConfig = createRuleConfig(this.ruleSettings);
     this.data = createEmptyData();
     this.currentEntry = null;
     this.currentPlaybackEntries = new Map();
@@ -1767,7 +1920,7 @@ class UsageTracker {
       defaultValue: () => createEmptyData()
     });
 
-    const migrated = migrateUsageData(loaded.value);
+    const migrated = migrateUsageData(loaded.value, { ruleConfig: this.ruleConfig });
     this.data = migrated.data;
     this.resetDerivedCaches();
 
@@ -1832,13 +1985,33 @@ class UsageTracker {
   }
 
   async replaceData(nextData) {
-    const migrated = migrateUsageData(nextData);
+    const migrated = migrateUsageData(nextData, { ruleConfig: this.ruleConfig });
     this.data = migrated.data;
     this.currentEntry = null;
     this.currentPlaybackEntries = new Map();
     this.entryHints.clear();
     this.resetDerivedCaches();
     await this.save();
+    await this.emitDataChanged();
+  }
+
+  async updateRuleSettings(ruleSettings = {}) {
+    const now = Date.now();
+    this.commitCurrentEntry(now);
+    this.commitPlaybackEntries(now);
+    this.ruleSettings = {
+      customServiceRules: normalizeCustomServiceRules(ruleSettings.customServiceRules),
+      categoryRules: normalizeCategoryRules(ruleSettings.categoryRules)
+    };
+    this.ruleConfig = createRuleConfig(this.ruleSettings);
+    const migrated = migrateUsageData(this.data, { ruleConfig: this.ruleConfig });
+    this.data = migrated.data;
+    this.currentEntry = null;
+    this.currentPlaybackEntries = new Map();
+    this.entryHints.clear();
+    this.resetDerivedCaches();
+    await this.save();
+    await this.pollActiveWindow().catch(() => {});
     await this.emitDataChanged();
   }
 
@@ -2008,13 +2181,13 @@ class UsageTracker {
           startedAt: now,
           lastSeenAt: now,
           executablePath
-        });
+        }, this.ruleConfig);
       }
     }
 
     if (musicProfile) {
       const musicKey = `music:${musicProfile.id}`;
-      const entry = {
+      const entry = canonicalizeEntry({
         key: musicKey,
         kind: 'app',
         appName: musicProfile.displayLabel,
@@ -2032,7 +2205,7 @@ class UsageTracker {
         executablePath,
         trackingMode: 'foreground',
         trackingSource: 'foreground'
-      };
+      }, this.ruleConfig);
       this.rememberEntryHint(entry);
       return entry;
     }
@@ -2056,7 +2229,7 @@ class UsageTracker {
       executablePath,
       trackingMode: 'foreground',
       trackingSource: 'foreground'
-    });
+    }, this.ruleConfig);
     this.rememberEntryHint(entry);
     return entry;
   }
@@ -2136,7 +2309,7 @@ class UsageTracker {
     );
     const subtitle = sanitizeText(candidate.subtitle, label);
 
-    return {
+    return canonicalizeEntry({
       key: candidate.key,
       kind: 'app',
       label,
@@ -2168,7 +2341,7 @@ class UsageTracker {
       audioEndpointId: sanitizeText(candidate.audioEndpointId),
       audioSessionIdentifier: sanitizeText(candidate.audioSessionIdentifier),
       audioSessionInstanceIdentifier: sanitizeText(candidate.audioSessionInstanceIdentifier)
-    };
+    }, this.ruleConfig);
   }
 
   createPlaybackEntryFromSession(session, now) {
@@ -2258,6 +2431,8 @@ class UsageTracker {
         host: entry.host,
         path: entry.path,
         executablePath: entry.executablePath,
+        categoryId: entry.categoryId,
+        categoryLabel: entry.categoryLabel,
         trackingMode: entry.trackingMode,
         trackingSource: entry.trackingSource,
         sourceAppUserModelId: entry.sourceAppUserModelId,
@@ -2292,6 +2467,8 @@ class UsageTracker {
     item.host = entry.host;
     item.path = entry.path;
     item.executablePath = entry.executablePath;
+    item.categoryId = entry.categoryId || item.categoryId || '';
+    item.categoryLabel = entry.categoryLabel || item.categoryLabel || getCategoryLabel(item.categoryId);
     item.trackingMode = entry.trackingMode || item.trackingMode || '';
     item.trackingSource = entry.trackingSource || item.trackingSource || '';
     item.sourceAppUserModelId = entry.sourceAppUserModelId || item.sourceAppUserModelId || '';
@@ -2379,6 +2556,8 @@ class UsageTracker {
           existing.pageTitle = item.pageTitle || existing.pageTitle;
           existing.appName = item.appName || existing.appName;
           existing.executablePath = item.executablePath || existing.executablePath;
+          existing.categoryId = item.categoryId || existing.categoryId || '';
+          existing.categoryLabel = item.categoryLabel || existing.categoryLabel || getCategoryLabel(existing.categoryId);
           existing.trackingMode = item.trackingMode || existing.trackingMode;
           existing.trackingSource = item.trackingSource || existing.trackingSource;
           existing.sourceAppUserModelId = item.sourceAppUserModelId || existing.sourceAppUserModelId;
@@ -2497,7 +2676,10 @@ module.exports = {
     isAllowedBridgeOrigin,
     isBridgeRequestAuthorized,
     buildMediaSubtitle,
+    createRuleConfig,
+    findCategoryRule,
     findMusicAppProfile,
+    findServiceProfile,
     isTrackableMusicSession,
     isTrackableWasapiSession,
     isBrowserSourceAppUserModelId,
@@ -2505,6 +2687,7 @@ module.exports = {
     parseWasapiSnapshotOutput,
     buildPlaybackCandidateFromSmtc,
     buildPlaybackCandidateFromWasapi,
+    canonicalizeEntry,
     fusePlaybackCandidates,
     clonePlaybackCandidateList,
     HelperBackedPlaybackSessionFusionService,

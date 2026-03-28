@@ -5,6 +5,12 @@ const DEFAULT_BACKUP_STATUS = Object.freeze({
 const THEME_PREFERENCE_LIGHT = 'light';
 const THEME_PREFERENCE_DARK = 'dark';
 const THEME_PREFERENCE_SYSTEM = 'system';
+const DEFAULT_CATEGORY_OPTIONS = Object.freeze([
+  { id: 'work', label: '工作' },
+  { id: 'entertainment', label: '娱乐' },
+  { id: 'study', label: '学习' },
+  { id: 'communication', label: '沟通' }
+]);
 const systemThemeMediaQuery = typeof window.matchMedia === 'function'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null;
@@ -23,9 +29,13 @@ const state = {
   updatingCloseAction: false,
   updatingThemePreference: false,
   updatingAutoBackup: false,
+  updatingServiceRules: false,
+  updatingCategoryRules: false,
   backupBusy: false,
   backupBusyAction: '',
-  backupStatus: { ...DEFAULT_BACKUP_STATUS }
+  backupStatus: { ...DEFAULT_BACKUP_STATUS },
+  serviceRuleDrafts: [],
+  categoryRuleDrafts: []
 };
 
 const elements = {
@@ -93,6 +103,14 @@ const elements = {
   importBackupButton: document.getElementById('import-backup-button'),
   backupStatusDot: document.getElementById('backup-status-dot'),
   backupStatusText: document.getElementById('backup-status-text'),
+  addServiceRuleButton: document.getElementById('add-service-rule-button'),
+  saveServiceRulesButton: document.getElementById('save-service-rules-button'),
+  serviceRulesSummary: document.getElementById('service-rules-summary'),
+  serviceRuleList: document.getElementById('service-rule-list'),
+  addCategoryRuleButton: document.getElementById('add-category-rule-button'),
+  saveCategoryRulesButton: document.getElementById('save-category-rules-button'),
+  categoryRulesSummary: document.getElementById('category-rules-summary'),
+  categoryRuleList: document.getElementById('category-rule-list'),
   selectedItemsSummary: document.getElementById('selected-items-summary'),
   itemVisibilityList: document.getElementById('item-visibility-list'),
   selectAllItemsButton: document.getElementById('select-all-items-button'),
@@ -274,6 +292,81 @@ function formatAutoBackupInterval(intervalMinutes) {
     : `每 ${parts.value} 小时`;
 }
 
+function createClientRuleId(prefix = 'rule') {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeMatcherInput(value) {
+  return [...new Set(
+    String(value || '')
+      .split(/[\n,，；;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  )];
+}
+
+function cloneRule(rule) {
+  return {
+    ...rule,
+    appMatchers: [...(Array.isArray(rule?.appMatchers) ? rule.appMatchers : [])],
+    domains: [...(Array.isArray(rule?.domains) ? rule.domains : [])]
+  };
+}
+
+function cloneRuleList(items) {
+  return (Array.isArray(items) ? items : []).map((item) => cloneRule(item));
+}
+
+function areRuleListsEqual(left, right) {
+  return JSON.stringify(cloneRuleList(left)) === JSON.stringify(cloneRuleList(right));
+}
+
+function getAvailableCategories() {
+  return Array.isArray(state.settings?.availableCategories) && state.settings.availableCategories.length
+    ? state.settings.availableCategories
+    : DEFAULT_CATEGORY_OPTIONS;
+}
+
+function getCategoryLabel(categoryId) {
+  return getAvailableCategories().find((item) => item.id === categoryId)?.label || '';
+}
+
+function getItemCategoryLabel(item) {
+  return item?.categoryLabel || getCategoryLabel(item?.categoryId) || '';
+}
+
+function prependCategoryLabel(baseText, item) {
+  const categoryLabel = getItemCategoryLabel(item);
+  if (!categoryLabel) {
+    return baseText;
+  }
+
+  return baseText ? `${categoryLabel} · ${baseText}` : categoryLabel;
+}
+
+function createBlankServiceRule() {
+  return {
+    id: createClientRuleId('service'),
+    serviceName: '',
+    appMatchers: [],
+    domains: []
+  };
+}
+
+function createBlankCategoryRule() {
+  return {
+    id: createClientRuleId('category'),
+    categoryId: getAvailableCategories()[0]?.id || 'work',
+    appMatchers: [],
+    domains: []
+  };
+}
+
+function syncRuleDraftsFromSettings() {
+  state.serviceRuleDrafts = cloneRuleList(state.settings?.customServiceRules);
+  state.categoryRuleDrafts = cloneRuleList(state.settings?.categoryRules);
+}
+
 function getInitials(item) {
   const label = item.label || item.appName || item.host || 'APP';
   const filtered = label.replace(/[^A-Za-z0-9\u4e00-\u9fa5]/g, '').trim();
@@ -359,6 +452,8 @@ function getFilteredWeekly(snapshot) {
       existing.appName = item.appName || existing.appName;
       existing.executablePath = item.executablePath || existing.executablePath;
       existing.browserFamily = item.browserFamily || existing.browserFamily;
+      existing.categoryId = item.categoryId || existing.categoryId || '';
+      existing.categoryLabel = item.categoryLabel || existing.categoryLabel || getCategoryLabel(existing.categoryId);
       existing.trackingMode = item.trackingMode || existing.trackingMode;
       existing.trackingSource = item.trackingSource || existing.trackingSource;
       existing.sourceAppUserModelId = item.sourceAppUserModelId || existing.sourceAppUserModelId;
@@ -415,6 +510,8 @@ function getAllKnownItems() {
         existing.host = item.host;
         existing.path = item.path;
         existing.executablePath = item.executablePath;
+        existing.categoryId = item.categoryId || existing.categoryId || '';
+        existing.categoryLabel = item.categoryLabel || existing.categoryLabel || getCategoryLabel(existing.categoryId);
         existing.trackingMode = item.trackingMode;
         existing.trackingSource = item.trackingSource;
         existing.sourceAppUserModelId = item.sourceAppUserModelId;
@@ -604,19 +701,19 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
 }
 
 function getRankingSubtitle(item) {
+  let baseText = '';
+
   if (item.kind === 'service') {
-    return item.subtitle || item.host || item.appName || '';
+    baseText = item.subtitle || item.host || item.appName || '';
+  } else if (item.kind === 'site') {
+    baseText = item.host || item.subtitle || item.appName || '';
+  } else if (item.kind === 'page') {
+    baseText = item.host || item.subtitle || item.url || item.appName || '';
+  } else {
+    baseText = item.subtitle || item.windowTitle || item.appName || '';
   }
 
-  if (item.kind === 'site') {
-    return item.host || item.subtitle || item.appName || '';
-  }
-
-  if (item.kind === 'page') {
-    return item.host || item.subtitle || item.url || item.appName || '';
-  }
-
-  return item.subtitle || item.windowTitle || item.appName || '';
+  return prependCategoryLabel(baseText, item);
 }
 
 function getDetailSubtitle(detail) {
@@ -624,19 +721,37 @@ function getDetailSubtitle(detail) {
     return '';
   }
 
+  let baseText = '';
   if (detail.kind === 'service') {
-    return detail.host || detail.subtitle || detail.appName || '';
+    baseText = detail.host || detail.subtitle || detail.appName || '';
+  } else if (detail.kind === 'site') {
+    baseText = detail.host || detail.appName || '';
+  } else if (detail.kind === 'page') {
+    baseText = detail.host || detail.url || detail.appName || '';
+  } else {
+    baseText = detail.appName || '';
   }
 
-  if (detail.kind === 'site') {
-    return detail.host || detail.appName || '';
+  return prependCategoryLabel(baseText, detail);
+}
+
+function getSettingsItemMeta(item) {
+  const parts = [];
+  const categoryLabel = getItemCategoryLabel(item);
+
+  if (categoryLabel) {
+    parts.push(categoryLabel);
   }
 
-  if (detail.kind === 'page') {
-    return detail.host || detail.url || detail.appName || '';
+  if (item.kind === 'service') {
+    parts.push(item.host || item.appName || '服务');
+  } else if (item.kind === 'site' || item.kind === 'page') {
+    parts.push(item.host || item.appName || '网页');
+  } else {
+    parts.push(item.appName || item.processName || item.subtitle || '应用');
   }
 
-  return detail.appName || '';
+  return parts.filter(Boolean).join(' · ');
 }
 
 function formatTrackingSourceLabel(trackingSource) {
@@ -915,6 +1030,289 @@ function renderSettingsState() {
   renderBrowserExtensionStatus(snapshot);
 }
 
+function joinMatcherValues(values) {
+  return (Array.isArray(values) ? values : []).join(', ');
+}
+
+function createRuleField({ labelText, input, full = false }) {
+  const field = document.createElement('label');
+  field.className = `setting-rule-field${full ? ' full' : ''}`;
+
+  const label = document.createElement('span');
+  label.className = 'setting-rule-field-label';
+  label.textContent = labelText;
+
+  field.appendChild(label);
+  field.appendChild(input);
+  return field;
+}
+
+function renderServiceRuleSettings() {
+  const drafts = cloneRuleList(state.serviceRuleDrafts);
+  const storedRules = cloneRuleList(state.settings?.customServiceRules);
+  const dirty = !areRuleListsEqual(drafts, storedRules);
+
+  if (!drafts.length) {
+    elements.serviceRulesSummary.textContent = dirty
+      ? '已清空全部服务合并规则，保存后会生效。'
+      : '还没有自定义服务合并规则。';
+  } else {
+    elements.serviceRulesSummary.textContent = dirty
+      ? `已编辑 ${drafts.length} 条服务合并规则，尚未保存。`
+      : `已配置 ${drafts.length} 条服务合并规则。`;
+  }
+
+  elements.addServiceRuleButton.disabled = state.updatingServiceRules;
+  elements.saveServiceRulesButton.disabled = state.updatingServiceRules || !dirty;
+  elements.saveServiceRulesButton.textContent = state.updatingServiceRules ? '保存中...' : '保存规则';
+  elements.serviceRuleList.replaceChildren();
+
+  if (!drafts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'setting-rule-empty';
+    empty.textContent = '例如把 Slack 应用和 `slack.com` 合并成一个服务，保存后排行和详情会一起归并。';
+    elements.serviceRuleList.appendChild(empty);
+    return;
+  }
+
+  drafts.forEach((rule, index) => {
+    const card = document.createElement('div');
+    card.className = 'setting-rule-card';
+
+    const grid = document.createElement('div');
+    grid.className = 'setting-rule-grid';
+
+    const serviceNameInput = document.createElement('input');
+    serviceNameInput.className = 'setting-rule-input';
+    serviceNameInput.type = 'text';
+    serviceNameInput.placeholder = '例如 Slack';
+    serviceNameInput.value = rule.serviceName || '';
+    serviceNameInput.disabled = state.updatingServiceRules;
+    serviceNameInput.addEventListener('change', () => {
+      state.serviceRuleDrafts[index].serviceName = serviceNameInput.value.trim();
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '服务名称',
+      input: serviceNameInput
+    }));
+
+    const domainsInput = document.createElement('input');
+    domainsInput.className = 'setting-rule-input';
+    domainsInput.type = 'text';
+    domainsInput.placeholder = '例如 slack.com, app.slack.com';
+    domainsInput.value = joinMatcherValues(rule.domains);
+    domainsInput.disabled = state.updatingServiceRules;
+    domainsInput.addEventListener('change', () => {
+      state.serviceRuleDrafts[index].domains = normalizeMatcherInput(domainsInput.value);
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '域名',
+      input: domainsInput
+    }));
+
+    const appMatchersInput = document.createElement('input');
+    appMatchersInput.className = 'setting-rule-input';
+    appMatchersInput.type = 'text';
+    appMatchersInput.placeholder = '例如 Slack, slack.exe';
+    appMatchersInput.value = joinMatcherValues(rule.appMatchers);
+    appMatchersInput.disabled = state.updatingServiceRules;
+    appMatchersInput.addEventListener('change', () => {
+      state.serviceRuleDrafts[index].appMatchers = normalizeMatcherInput(appMatchersInput.value);
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '桌面应用',
+      input: appMatchersInput,
+      full: true
+    }));
+
+    card.appendChild(grid);
+
+    const hint = document.createElement('div');
+    hint.className = 'setting-rule-hint';
+    hint.textContent = '应用名和域名都支持用逗号分隔；域名会自动按根域名匹配。';
+    card.appendChild(hint);
+
+    const actions = document.createElement('div');
+    actions.className = 'setting-rule-actions';
+
+    const moveUpButton = document.createElement('button');
+    moveUpButton.className = 'text-button inline-button';
+    moveUpButton.type = 'button';
+    moveUpButton.textContent = '上移';
+    moveUpButton.disabled = state.updatingServiceRules || index === 0;
+    moveUpButton.addEventListener('click', () => {
+      const [movedRule] = state.serviceRuleDrafts.splice(index, 1);
+      state.serviceRuleDrafts.splice(index - 1, 0, movedRule);
+      renderSettingsScreen();
+    });
+    actions.appendChild(moveUpButton);
+
+    const moveDownButton = document.createElement('button');
+    moveDownButton.className = 'text-button inline-button';
+    moveDownButton.type = 'button';
+    moveDownButton.textContent = '下移';
+    moveDownButton.disabled = state.updatingServiceRules || index === drafts.length - 1;
+    moveDownButton.addEventListener('click', () => {
+      const [movedRule] = state.serviceRuleDrafts.splice(index, 1);
+      state.serviceRuleDrafts.splice(index + 1, 0, movedRule);
+      renderSettingsScreen();
+    });
+    actions.appendChild(moveDownButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'text-button inline-button';
+    deleteButton.type = 'button';
+    deleteButton.textContent = '删除';
+    deleteButton.disabled = state.updatingServiceRules;
+    deleteButton.addEventListener('click', () => {
+      state.serviceRuleDrafts.splice(index, 1);
+      renderSettingsScreen();
+    });
+    actions.appendChild(deleteButton);
+
+    card.appendChild(actions);
+    elements.serviceRuleList.appendChild(card);
+  });
+}
+
+function renderCategoryRuleSettings() {
+  const drafts = cloneRuleList(state.categoryRuleDrafts);
+  const storedRules = cloneRuleList(state.settings?.categoryRules);
+  const dirty = !areRuleListsEqual(drafts, storedRules);
+
+  if (!drafts.length) {
+    elements.categoryRulesSummary.textContent = dirty
+      ? '已清空全部分类规则，保存后会生效。'
+      : '还没有自定义分类规则。';
+  } else {
+    elements.categoryRulesSummary.textContent = dirty
+      ? `已编辑 ${drafts.length} 条分类规则，尚未保存。`
+      : `已配置 ${drafts.length} 条分类规则。`;
+  }
+
+  elements.addCategoryRuleButton.disabled = state.updatingCategoryRules;
+  elements.saveCategoryRulesButton.disabled = state.updatingCategoryRules || !dirty;
+  elements.saveCategoryRulesButton.textContent = state.updatingCategoryRules ? '保存中...' : '保存规则';
+  elements.categoryRuleList.replaceChildren();
+
+  if (!drafts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'setting-rule-empty';
+    empty.textContent = '例如把 GitHub、VS Code 归到“工作”，把 bilibili 归到“娱乐”。';
+    elements.categoryRuleList.appendChild(empty);
+    return;
+  }
+
+  drafts.forEach((rule, index) => {
+    const card = document.createElement('div');
+    card.className = 'setting-rule-card';
+
+    const grid = document.createElement('div');
+    grid.className = 'setting-rule-grid';
+
+    const categorySelect = document.createElement('select');
+    categorySelect.className = 'setting-rule-input';
+    categorySelect.disabled = state.updatingCategoryRules;
+    getAvailableCategories().forEach((category) => {
+      const option = document.createElement('option');
+      option.value = category.id;
+      option.textContent = category.label;
+      option.selected = category.id === rule.categoryId;
+      categorySelect.appendChild(option);
+    });
+    categorySelect.addEventListener('change', () => {
+      state.categoryRuleDrafts[index].categoryId = categorySelect.value;
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '分类',
+      input: categorySelect
+    }));
+
+    const domainsInput = document.createElement('input');
+    domainsInput.className = 'setting-rule-input';
+    domainsInput.type = 'text';
+    domainsInput.placeholder = '例如 github.com, bilibili.com';
+    domainsInput.value = joinMatcherValues(rule.domains);
+    domainsInput.disabled = state.updatingCategoryRules;
+    domainsInput.addEventListener('change', () => {
+      state.categoryRuleDrafts[index].domains = normalizeMatcherInput(domainsInput.value);
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '域名',
+      input: domainsInput
+    }));
+
+    const appMatchersInput = document.createElement('input');
+    appMatchersInput.className = 'setting-rule-input';
+    appMatchersInput.type = 'text';
+    appMatchersInput.placeholder = '例如 Slack, Visual Studio Code';
+    appMatchersInput.value = joinMatcherValues(rule.appMatchers);
+    appMatchersInput.disabled = state.updatingCategoryRules;
+    appMatchersInput.addEventListener('change', () => {
+      state.categoryRuleDrafts[index].appMatchers = normalizeMatcherInput(appMatchersInput.value);
+      renderSettingsScreen();
+    });
+    grid.appendChild(createRuleField({
+      labelText: '应用 / 服务名称',
+      input: appMatchersInput,
+      full: true
+    }));
+
+    card.appendChild(grid);
+
+    const hint = document.createElement('div');
+    hint.className = 'setting-rule-hint';
+    hint.textContent = '先匹配到的分类规则会优先生效；合并后的服务名称也可以直接在这里匹配。';
+    card.appendChild(hint);
+
+    const actions = document.createElement('div');
+    actions.className = 'setting-rule-actions';
+
+    const moveUpButton = document.createElement('button');
+    moveUpButton.className = 'text-button inline-button';
+    moveUpButton.type = 'button';
+    moveUpButton.textContent = '上移';
+    moveUpButton.disabled = state.updatingCategoryRules || index === 0;
+    moveUpButton.addEventListener('click', () => {
+      const [movedRule] = state.categoryRuleDrafts.splice(index, 1);
+      state.categoryRuleDrafts.splice(index - 1, 0, movedRule);
+      renderSettingsScreen();
+    });
+    actions.appendChild(moveUpButton);
+
+    const moveDownButton = document.createElement('button');
+    moveDownButton.className = 'text-button inline-button';
+    moveDownButton.type = 'button';
+    moveDownButton.textContent = '下移';
+    moveDownButton.disabled = state.updatingCategoryRules || index === drafts.length - 1;
+    moveDownButton.addEventListener('click', () => {
+      const [movedRule] = state.categoryRuleDrafts.splice(index, 1);
+      state.categoryRuleDrafts.splice(index + 1, 0, movedRule);
+      renderSettingsScreen();
+    });
+    actions.appendChild(moveDownButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'text-button inline-button';
+    deleteButton.type = 'button';
+    deleteButton.textContent = '删除';
+    deleteButton.disabled = state.updatingCategoryRules;
+    deleteButton.addEventListener('click', () => {
+      state.categoryRuleDrafts.splice(index, 1);
+      renderSettingsScreen();
+    });
+    actions.appendChild(deleteButton);
+
+    card.appendChild(actions);
+    elements.categoryRuleList.appendChild(card);
+  });
+}
+
 function renderItemVisibilitySettings() {
   const items = getAllKnownItems();
   const hiddenKeys = getHiddenItemKeySet();
@@ -941,6 +1339,7 @@ function renderItemVisibilitySettings() {
     const input = fragment.querySelector('.setting-checkbox-input');
     const avatar = fragment.querySelector('.setting-item-avatar');
     const name = fragment.querySelector('.setting-item-name');
+    const meta = fragment.querySelector('.setting-item-meta');
     const checked = !hiddenKeys.has(item.key);
 
     row.dataset.itemKey = item.key;
@@ -949,6 +1348,7 @@ function renderItemVisibilitySettings() {
     input.dataset.itemKey = item.key;
     input.setAttribute('aria-label', `切换 ${item.label} 的显示状态`);
     name.textContent = item.label;
+    meta.textContent = getSettingsItemMeta(item);
     setAvatarContent(avatar, item, state.iconCache.get(item.key) || null);
 
     input.addEventListener('change', () => {
@@ -1149,6 +1549,7 @@ function renderDetail() {
   elements.detailMeta.replaceChildren();
   const metaRows = detail.kind === 'service'
     ? [
+        ['分类', getItemCategoryLabel(detail) || '未分类'],
         ['服务', detail.label],
         ['站点域名', detail.host],
         ['最近内容标题', detail.pageTitle || detail.windowTitle],
@@ -1157,6 +1558,7 @@ function renderDetail() {
       ]
     : detail.kind === 'site'
     ? [
+        ['分类', getItemCategoryLabel(detail) || '未分类'],
         ['应用', detail.appName],
         ['站点域名', detail.host],
         ['最近网页标题', detail.pageTitle || detail.windowTitle],
@@ -1164,6 +1566,7 @@ function renderDetail() {
         ['可执行文件', detail.executablePath]
       ]
     : [
+        ['分类', getItemCategoryLabel(detail) || '未分类'],
         ['应用', detail.appName],
         ['计时方式', detail.trackingMode === 'playback' ? formatTrackingSourceLabel(detail.trackingSource) : '前台窗口'],
         ['最近播放内容', detail.mediaTitle],
@@ -1251,6 +1654,8 @@ function renderDetail() {
 
 function renderSettingsScreen() {
   renderSettingsState();
+  renderServiceRuleSettings();
+  renderCategoryRuleSettings();
   renderItemVisibilitySettings();
   showScreen('settings');
 }
@@ -1468,6 +1873,42 @@ async function updateThemePreference(themePreference) {
   renderSettingsScreen();
 }
 
+async function updateCustomServiceRules(customServiceRules) {
+  if (state.updatingServiceRules) {
+    return;
+  }
+
+  state.updatingServiceRules = true;
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setCustomServiceRules(cloneRuleList(customServiceRules));
+    syncRuleDraftsFromSettings();
+  } finally {
+    state.updatingServiceRules = false;
+  }
+
+  renderSettingsScreen();
+}
+
+async function updateCategoryRules(categoryRules) {
+  if (state.updatingCategoryRules) {
+    return;
+  }
+
+  state.updatingCategoryRules = true;
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setCategoryRules(cloneRuleList(categoryRules));
+    syncRuleDraftsFromSettings();
+  } finally {
+    state.updatingCategoryRules = false;
+  }
+
+  renderSettingsScreen();
+}
+
 async function openDetail(itemKey) {
   if (!isItemVisible(itemKey)) {
     returnToOverview();
@@ -1676,6 +2117,24 @@ function bindEvents() {
     handleBackupImport().catch(() => {});
   });
 
+  elements.addServiceRuleButton.addEventListener('click', () => {
+    state.serviceRuleDrafts.push(createBlankServiceRule());
+    renderSettingsScreen();
+  });
+
+  elements.saveServiceRulesButton.addEventListener('click', () => {
+    updateCustomServiceRules(state.serviceRuleDrafts).catch(() => {});
+  });
+
+  elements.addCategoryRuleButton.addEventListener('click', () => {
+    state.categoryRuleDrafts.push(createBlankCategoryRule());
+    renderSettingsScreen();
+  });
+
+  elements.saveCategoryRulesButton.addEventListener('click', () => {
+    updateCategoryRules(state.categoryRuleDrafts).catch(() => {});
+  });
+
   elements.selectAllItemsButton.addEventListener('click', () => {
     updateHiddenItemKeys([]).catch(() => {});
   });
@@ -1718,6 +2177,7 @@ async function bootstrap() {
     window.usageApi.getSettings()
   ]);
 
+  syncRuleDraftsFromSettings();
   applyThemePreference();
   ensureSelectedDayKey();
   renderOverview();
@@ -1741,6 +2201,7 @@ async function bootstrap() {
 
   window.usageApi.onSettingsChanged((settings) => {
     state.settings = settings;
+    syncRuleDraftsFromSettings();
     applyThemePreference();
     if (state.detailItemKey && !isItemVisible(state.detailItemKey)) {
       returnToOverview();

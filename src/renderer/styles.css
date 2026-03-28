@@ -800,7 +800,8 @@ canvas {
 }
 
 .settings-number-input,
-.settings-select {
+.settings-select,
+.setting-rule-input {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface-1);
@@ -821,13 +822,15 @@ canvas {
 }
 
 .settings-number-input:focus,
-.settings-select:focus {
+.settings-select:focus,
+.setting-rule-input:focus {
   border-color: rgba(var(--accent-rgb), 0.7);
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .settings-number-input:disabled,
-.settings-select:disabled {
+.settings-select:disabled,
+.setting-rule-input:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -977,6 +980,60 @@ canvas {
   outline-offset: 3px;
 }
 
+.setting-rule-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.setting-rule-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-1);
+}
+
+.setting-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.setting-rule-field {
+  display: grid;
+  gap: 8px;
+}
+
+.setting-rule-field.full {
+  grid-column: 1 / -1;
+}
+
+.setting-rule-field-label {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setting-rule-input {
+  width: 100%;
+}
+
+.setting-rule-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.setting-rule-empty,
+.setting-rule-hint {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .setting-item-avatar {
   width: 46px;
   height: 46px;
@@ -992,6 +1049,16 @@ canvas {
   display: block;
   font-size: 15px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setting-item-meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1093,6 +1160,10 @@ canvas {
   .info-button {
     min-width: 60px;
     padding-inline: 12px;
+  }
+
+  .setting-rule-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

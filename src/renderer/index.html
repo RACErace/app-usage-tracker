@@ -218,6 +218,46 @@
               </article>
 
               <article class="card settings-panel">
+                <div class="section-title-row settings-section-header">
+                  <div>
+                    <h3 class="section-title">服务合并规则</h3>
+                    <p class="settings-description">把桌面应用和网页域名合并成一个服务。规则会按列表顺序依次匹配，越靠前优先级越高。</p>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="option-chip" type="button" id="add-service-rule-button">新增规则</button>
+                    <button class="option-chip" type="button" id="save-service-rules-button">保存规则</button>
+                  </div>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot active"></span>
+                  <span class="status-text" id="service-rules-summary">读取中</span>
+                </div>
+
+                <div class="setting-rule-list" id="service-rule-list"></div>
+              </article>
+
+              <article class="card settings-panel">
+                <div class="section-title-row settings-section-header">
+                  <div>
+                    <h3 class="section-title">分类规则</h3>
+                    <p class="settings-description">给应用、网站或服务打上“工作 / 娱乐 / 学习 / 沟通”等分类；同样按列表顺序依次匹配。</p>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="option-chip" type="button" id="add-category-rule-button">新增规则</button>
+                    <button class="option-chip" type="button" id="save-category-rules-button">保存规则</button>
+                  </div>
+                </div>
+
+                <div class="setting-status-line selection-summary-line">
+                  <span class="status-dot active"></span>
+                  <span class="status-text" id="category-rules-summary">读取中</span>
+                </div>
+
+                <div class="setting-rule-list" id="category-rule-list"></div>
+              </article>
+
+              <article class="card settings-panel">
                 <button class="setting-row" type="button" id="auto-backup-toggle" aria-label="切换自动备份">
                   <div class="setting-copy">
                     <span class="setting-name">自动备份</span>
@@ -296,7 +336,7 @@
                   <p class="bridge-status-detail" id="browser-extension-status-detail"></p>
                   <p id="settings-bridge-url-text"></p>
                 </div>
-                <p class="bridge-hint">当前会把同一个根域名下的网页合并统计，例如不同的 bilibili 视频页都会记到 bilibili。</p>
+                <p class="bridge-hint">当前会先识别网页域名，再按你配置的服务合并和分类规则统一归类。</p>
               </article>
             </aside>
           </div>
@@ -328,6 +368,7 @@
         <span class="app-avatar setting-item-avatar"></span>
         <span class="setting-item-copy">
           <span class="setting-item-name"></span>
+          <span class="setting-item-meta"></span>
         </span>
       </label>
     </template>

@@ -17,7 +17,7 @@ const {
 
 function createPersistedUsageData(label = 'Notepad') {
   return {
-    version: 3,
+    version: 4,
     days: {
       '2026-03-25': {
         totalMs: 120000,
@@ -149,6 +149,133 @@ test('migration keeps private-suffix websites separated instead of collapsing th
   const [item] = Object.values(migrated.data.days['2026-03-08'].items);
   assert.equal(item.host, 'foo.github.io');
   assert.equal(item.label, 'foo');
+});
+
+test('custom service rules merge matching desktop apps and domains into one service', () => {
+  const ruleConfig = __testables.createRuleConfig({
+    customServiceRules: [{
+      id: 'slack-rule',
+      serviceName: 'Slack',
+      appMatchers: ['Slack', 'slack.exe'],
+      domains: ['slack.com', 'app.slack.com']
+    }],
+    categoryRules: [{
+      id: 'communication-rule',
+      categoryId: 'communication',
+      appMatchers: ['Slack'],
+      domains: ['slack.com']
+    }]
+  });
+
+  const appEntry = __testables.canonicalizeEntry({
+    key: 'app:slack',
+    kind: 'app',
+    label: 'Slack',
+    subtitle: 'General',
+    appName: 'Slack',
+    browserFamily: null,
+    pageTitle: '',
+    windowTitle: 'Slack',
+    url: '',
+    host: '',
+    path: '',
+    executablePath: 'C:\\Users\\race2\\AppData\\Local\\slack\\slack.exe',
+    color: '#111111'
+  }, ruleConfig);
+
+  const siteEntry = __testables.canonicalizeEntry({
+    key: 'site:slack',
+    kind: 'site',
+    label: 'slack',
+    subtitle: 'Workspace',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: 'Slack',
+    windowTitle: 'Slack',
+    url: 'https://app.slack.com/client',
+    host: 'slack.com',
+    path: '/client',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    color: '#222222'
+  }, ruleConfig);
+
+  assert.equal(appEntry.key, 'service:custom:slack-rule');
+  assert.equal(siteEntry.key, 'service:custom:slack-rule');
+  assert.equal(appEntry.label, 'Slack');
+  assert.equal(siteEntry.kind, 'service');
+  assert.equal(appEntry.categoryId, 'communication');
+  assert.equal(siteEntry.categoryLabel, '沟通');
+});
+
+test('migration reapplies custom service and category rules to historical data', () => {
+  const ruleConfig = __testables.createRuleConfig({
+    customServiceRules: [{
+      id: 'slack-rule',
+      serviceName: 'Slack',
+      appMatchers: ['Slack'],
+      domains: ['slack.com']
+    }],
+    categoryRules: [{
+      id: 'communication-rule',
+      categoryId: 'communication',
+      appMatchers: ['Slack'],
+      domains: ['slack.com']
+    }]
+  });
+
+  const migrated = migrateUsageData({
+    version: 3,
+    days: {
+      '2026-03-26': {
+        totalMs: 120000,
+        items: {
+          'app:slack': {
+            key: 'app:slack',
+            kind: 'app',
+            label: 'Slack',
+            subtitle: 'Slack Desktop',
+            appName: 'Slack',
+            browserFamily: null,
+            pageTitle: '',
+            windowTitle: 'Slack Desktop',
+            url: '',
+            host: '',
+            path: '',
+            executablePath: 'C:\\Users\\race2\\AppData\\Local\\slack\\slack.exe',
+            totalMs: 60000,
+            hourly: new Array(24).fill(0),
+            color: '#111111',
+            lastSeenAt: 10
+          },
+          'site:slack': {
+            key: 'site:slack',
+            kind: 'site',
+            label: 'slack',
+            subtitle: 'Slack Web',
+            appName: 'Chrome',
+            browserFamily: 'Chrome',
+            pageTitle: 'Slack Web',
+            windowTitle: 'Slack Web',
+            url: 'https://app.slack.com/client',
+            host: 'slack.com',
+            path: '/client',
+            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            totalMs: 60000,
+            hourly: new Array(24).fill(0),
+            color: '#222222',
+            lastSeenAt: 11
+          }
+        }
+      }
+    }
+  }, { ruleConfig });
+
+  const items = Object.values(migrated.data.days['2026-03-26'].items);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].key, 'service:custom:slack-rule');
+  assert.equal(items[0].totalMs, 120000);
+  assert.equal(items[0].categoryId, 'communication');
+  assert.equal(items[0].categoryLabel, '沟通');
 });
 
 test('music app profiles match desktop app names and SMTC source ids', () => {
