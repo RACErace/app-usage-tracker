@@ -2,6 +2,12 @@ const DEFAULT_BACKUP_STATUS = Object.freeze({
   tone: 'neutral',
   text: '可将当前统计数据与设置导出为 JSON 备份文件，也支持导入旧的 usage-data.json。'
 });
+const THEME_PREFERENCE_LIGHT = 'light';
+const THEME_PREFERENCE_DARK = 'dark';
+const THEME_PREFERENCE_SYSTEM = 'system';
+const systemThemeMediaQuery = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
 
 const state = {
   snapshot: null,
@@ -15,6 +21,7 @@ const state = {
   unsubscribe: null,
   updatingHiddenItems: false,
   updatingCloseAction: false,
+  updatingThemePreference: false,
   updatingAutoBackup: false,
   backupBusy: false,
   backupBusyAction: '',
@@ -35,12 +42,20 @@ const elements = {
   dateLabel: document.getElementById('date-label'),
   browserExtensionWarning: document.getElementById('browser-extension-warning'),
   browserExtensionWarningText: document.getElementById('browser-extension-warning-text'),
+  overviewSummaryKicker: document.getElementById('overview-summary-kicker'),
+  overviewSummaryValue: document.getElementById('overview-summary-value'),
+  overviewSummaryCaption: document.getElementById('overview-summary-caption'),
+  overviewVisibleCount: document.getElementById('overview-visible-count'),
+  overviewVisibleCaption: document.getElementById('overview-visible-caption'),
+  overviewBridgeStatus: document.getElementById('overview-bridge-status'),
+  overviewBridgeCaption: document.getElementById('overview-bridge-caption'),
   chartSectionTitle: document.getElementById('chart-section-title'),
   summaryDuration: document.getElementById('summary-duration'),
   summarySubtitle: document.getElementById('summary-subtitle'),
   chartCanvas: document.getElementById('usage-chart'),
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
+  rankingSummary: document.getElementById('ranking-summary'),
   settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
   browserExtensionStatusDot: document.getElementById('browser-extension-status-dot'),
   browserExtensionStatusText: document.getElementById('browser-extension-status-text'),
@@ -71,6 +86,9 @@ const elements = {
   autoBackupPathText: document.getElementById('auto-backup-path-text'),
   closeActionStatus: document.getElementById('close-action-status'),
   closeActionButtons: [...document.querySelectorAll('[data-close-action]')],
+  themeStatusDot: document.getElementById('theme-status-dot'),
+  themeStatusText: document.getElementById('theme-status-text'),
+  themePreferenceButtons: [...document.querySelectorAll('[data-theme-preference]')],
   exportBackupButton: document.getElementById('export-backup-button'),
   importBackupButton: document.getElementById('import-backup-button'),
   backupStatusDot: document.getElementById('backup-status-dot'),
@@ -178,6 +196,39 @@ function getErrorMessage(error) {
   }
 
   return '操作失败，请稍后重试。';
+}
+
+function normalizeThemePreference(value) {
+  if (value === THEME_PREFERENCE_LIGHT || value === THEME_PREFERENCE_DARK || value === THEME_PREFERENCE_SYSTEM) {
+    return value;
+  }
+
+  return THEME_PREFERENCE_SYSTEM;
+}
+
+function getResolvedTheme(preference = state.settings?.themePreference) {
+  const normalizedPreference = normalizeThemePreference(preference);
+  if (normalizedPreference === THEME_PREFERENCE_LIGHT || normalizedPreference === THEME_PREFERENCE_DARK) {
+    return normalizedPreference;
+  }
+
+  return systemThemeMediaQuery?.matches ? THEME_PREFERENCE_DARK : THEME_PREFERENCE_LIGHT;
+}
+
+function getThemeLabel(theme) {
+  return theme === THEME_PREFERENCE_LIGHT ? '浅色主题' : '深色主题';
+}
+
+function applyThemePreference() {
+  const preference = normalizeThemePreference(state.settings?.themePreference);
+  const resolvedTheme = getResolvedTheme(preference);
+  document.documentElement.dataset.themePreference = preference;
+  document.documentElement.dataset.theme = resolvedTheme;
+}
+
+function getCssColor(variableName, fallbackValue) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variableName).trim();
+  return value || fallbackValue;
 }
 
 function setBackupStatus(status) {
@@ -633,6 +684,8 @@ function getCanvasMetrics(canvas) {
 function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }) {
   const context = canvas.getContext('2d');
   const { ratio, width, height } = getCanvasMetrics(canvas);
+  const gridColor = getCssColor('--chart-grid', 'rgba(255, 255, 255, 0.08)');
+  const labelColor = getCssColor('--chart-label', 'rgba(255, 255, 255, 0.5)');
   const padding = { top: 14, right: 72, bottom: 30, left: 8 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -647,7 +700,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
   context.font = '12px Segoe UI';
   context.textBaseline = 'middle';
 
-  context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  context.strokeStyle = gridColor;
   context.lineWidth = 1;
   yLabels.forEach((value) => {
     const y = padding.top + chartHeight * (1 - value.ratio);
@@ -655,7 +708,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     context.moveTo(padding.left, y);
     context.lineTo(width - padding.right + 4, y);
     context.stroke();
-    context.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    context.fillStyle = labelColor;
     context.textAlign = 'left';
     context.fillText(value.label, width - padding.right + 12, y);
   });
@@ -672,7 +725,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     context.fill();
 
     if (label) {
-      context.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      context.fillStyle = labelColor;
       context.textAlign = 'center';
       context.fillText(label, x + barWidth / 2, height - 10);
     }
@@ -752,13 +805,11 @@ function showTooltip({ tooltip, rect, chartPoint, valueText, labelText, rows = [
 
 function updateHeader() {
   const isDetail = state.activeScreen === 'detail';
-
-  elements.topbar.classList.toggle('overview-hidden', !isDetail);
   elements.tabRow.classList.toggle('hidden-nav', isDetail);
   elements.backButton.classList.toggle('inactive', !isDetail);
   elements.screenTitle.textContent = isDetail
     ? (state.detail?.label || '详情')
-    : '';
+    : (state.activeScreen === 'settings' ? '设置' : '使用统计');
 }
 
 function updateTopTabs() {
@@ -793,6 +844,8 @@ function renderSettingsState() {
   const autoBackupDirectory = state.settings?.autoBackupDirectory || '';
   const autoBackupError = state.settings?.lastAutoBackupError || '';
   const closeAction = state.settings?.closeWindowAction || 'tray';
+  const themePreference = normalizeThemePreference(state.settings?.themePreference);
+  const resolvedTheme = getResolvedTheme(themePreference);
   const backupBusyText = state.backupBusy
     ? (state.backupBusyAction === 'import' ? '正在导入并恢复备份...' : '正在导出备份...')
     : state.backupStatus.text;
@@ -801,6 +854,17 @@ function renderSettingsState() {
     tray: '关闭窗口时将最小化到系统托盘',
     ask: '关闭窗口时每次都询问'
   };
+
+  elements.themeStatusDot.classList.add('active');
+  elements.themeStatusText.textContent = themePreference === THEME_PREFERENCE_SYSTEM
+    ? `当前跟随系统，已应用${getThemeLabel(resolvedTheme)}`
+    : `当前已固定为${getThemeLabel(resolvedTheme)}`;
+  elements.themePreferenceButtons.forEach((button) => {
+    const isActive = button.dataset.themePreference === themePreference;
+    button.classList.toggle('active', isActive);
+    button.disabled = state.updatingThemePreference;
+    button.setAttribute('aria-checked', isActive ? 'true' : 'false');
+  });
 
   elements.autoLaunchSwitch.classList.toggle('active', enabled);
   elements.autoLaunchDot.classList.toggle('active', enabled);
@@ -899,6 +963,27 @@ function renderItemVisibilitySettings() {
   hydrateSettingsIcons(items).catch(() => {});
 }
 
+function renderOverviewSummary(activeDay, weekly, rankingItems) {
+  const allKnownItems = getAllKnownItems();
+  const hiddenCount = getHiddenItemKeySet().size;
+  const visibleCount = Math.max(allKnownItems.length - hiddenCount, 0);
+  const isDaily = state.selectedRange === 'daily';
+  const browserMessages = getBrowserExtensionMessages(getBrowserExtensionStatus());
+  const highlightValue = isDaily ? activeDay.totalMs : weekly.averageMs;
+
+  elements.overviewSummaryKicker.textContent = isDaily ? '今日统计' : '近 7 天日均';
+  elements.overviewSummaryValue.textContent = formatDuration(highlightValue);
+  elements.overviewSummaryCaption.textContent = isDaily
+    ? `当前查看：${formatDayLabel(state.selectedDayKey)}`
+    : `近 7 天总时长 ${formatDuration(weekly.totalMs)}`;
+  elements.overviewVisibleCount.textContent = `${visibleCount} 项`;
+  elements.overviewVisibleCaption.textContent = allKnownItems.length
+    ? `当前排行展示 ${Math.min(rankingItems.length, visibleCount)} 项，已隐藏 ${hiddenCount} 项`
+    : '采集到统计数据后会自动生成可配置项目';
+  elements.overviewBridgeStatus.textContent = browserMessages.summary;
+  elements.overviewBridgeCaption.textContent = browserMessages.detail;
+}
+
 function renderRanking(items, totalMs) {
   elements.rankingList.replaceChildren();
   if (!items.length) {
@@ -952,7 +1037,11 @@ function renderOverview() {
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
   elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(weekly.averageMs, 'short');
   elements.summarySubtitle.textContent = isDaily ? '' : `总时长：${formatDuration(weekly.totalMs)}`;
+  elements.rankingSummary.textContent = rankingItems.length
+    ? `共 ${rankingItems.length} 项`
+    : '等待采集数据';
 
+  renderOverviewSummary(activeDay, weekly, rankingItems);
   renderRanking(rankingItems, totalMs);
   renderSettingsState();
 
@@ -1229,6 +1318,7 @@ async function handleBackupImport() {
       window.usageApi.getSnapshot(),
       window.usageApi.getSettings()
     ]);
+    applyThemePreference();
     ensureSelectedDayKey();
     state.detailItemKey = null;
     state.detail = null;
@@ -1278,6 +1368,7 @@ async function updateAutoBackupSettings(partialSettings = {}) {
     autoLaunchEnabled: false,
     hiddenItemKeys: [],
     closeWindowAction: 'tray',
+    themePreference: THEME_PREFERENCE_SYSTEM,
     autoBackupEnabled: false,
     autoBackupIntervalMinutes: 1440
   };
@@ -1316,7 +1407,12 @@ async function updateCloseWindowAction(closeWindowAction) {
     return;
   }
 
-  const previousSettings = state.settings || { autoLaunchEnabled: false, hiddenItemKeys: [], closeWindowAction: 'tray' };
+  const previousSettings = state.settings || {
+    autoLaunchEnabled: false,
+    hiddenItemKeys: [],
+    closeWindowAction: 'tray',
+    themePreference: THEME_PREFERENCE_SYSTEM
+  };
   state.updatingCloseAction = true;
   state.settings = {
     ...previousSettings,
@@ -1332,6 +1428,41 @@ async function updateCloseWindowAction(closeWindowAction) {
     throw error;
   } finally {
     state.updatingCloseAction = false;
+  }
+
+  renderSettingsScreen();
+}
+
+async function updateThemePreference(themePreference) {
+  if (state.updatingThemePreference) {
+    return;
+  }
+
+  const normalizedThemePreference = normalizeThemePreference(themePreference);
+  const previousSettings = state.settings || {
+    autoLaunchEnabled: false,
+    hiddenItemKeys: [],
+    closeWindowAction: 'tray',
+    themePreference: THEME_PREFERENCE_SYSTEM
+  };
+  state.updatingThemePreference = true;
+  state.settings = {
+    ...previousSettings,
+    themePreference: normalizedThemePreference
+  };
+  applyThemePreference();
+  renderSettingsScreen();
+
+  try {
+    state.settings = await window.usageApi.setThemePreference(normalizedThemePreference);
+    applyThemePreference();
+  } catch (error) {
+    state.settings = previousSettings;
+    applyThemePreference();
+    renderSettingsScreen();
+    throw error;
+  } finally {
+    state.updatingThemePreference = false;
   }
 
   renderSettingsScreen();
@@ -1404,7 +1535,11 @@ function restoreSettingsViewport(pageScrollTop, listScrollTop, activeItemKey) {
 
 async function updateHiddenItemKeys(hiddenItemKeys) {
   const nextHiddenItemKeys = [...new Set(hiddenItemKeys)];
-  const previousSettings = state.settings || { autoLaunchEnabled: false, hiddenItemKeys: [] };
+  const previousSettings = state.settings || {
+    autoLaunchEnabled: false,
+    hiddenItemKeys: [],
+    themePreference: THEME_PREFERENCE_SYSTEM
+  };
   const previousPageScrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
   const previousListScrollTop = state.activeScreen === 'settings' && elements.itemVisibilityList
     ? elements.itemVisibilityList.scrollTop
@@ -1527,6 +1662,12 @@ function bindEvents() {
     });
   });
 
+  elements.themePreferenceButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      updateThemePreference(button.dataset.themePreference).catch(() => {});
+    });
+  });
+
   elements.exportBackupButton.addEventListener('click', () => {
     handleBackupExport().catch(() => {});
   });
@@ -1551,6 +1692,23 @@ function bindEvents() {
 
     returnToOverview();
   });
+
+  if (systemThemeMediaQuery) {
+    const handleSystemThemeChange = () => {
+      if (normalizeThemePreference(state.settings?.themePreference) !== THEME_PREFERENCE_SYSTEM) {
+        return;
+      }
+
+      applyThemePreference();
+      renderCurrentScreen();
+    };
+
+    if (typeof systemThemeMediaQuery.addEventListener === 'function') {
+      systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange);
+    } else if (typeof systemThemeMediaQuery.addListener === 'function') {
+      systemThemeMediaQuery.addListener(handleSystemThemeChange);
+    }
+  }
 }
 
 async function bootstrap() {
@@ -1560,6 +1718,7 @@ async function bootstrap() {
     window.usageApi.getSettings()
   ]);
 
+  applyThemePreference();
   ensureSelectedDayKey();
   renderOverview();
 
@@ -1582,6 +1741,7 @@ async function bootstrap() {
 
   window.usageApi.onSettingsChanged((settings) => {
     state.settings = settings;
+    applyThemePreference();
     if (state.detailItemKey && !isItemVisible(state.detailItemKey)) {
       returnToOverview();
       return;
@@ -1591,4 +1751,5 @@ async function bootstrap() {
   });
 }
 
+applyThemePreference();
 bootstrap();
