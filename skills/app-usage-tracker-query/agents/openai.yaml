@@ -1,4 +1,4 @@
 interface:
   display_name: "App Usage Query"
-  short_description: "Query local app usage data and history"
-  default_prompt: "Use $app-usage-tracker-query to inspect local app usage data via the CLI."
+  short_description: "Query local app usage data, history, and timelines"
+  default_prompt: "Use $app-usage-tracker-query to inspect local app usage days, rankings, details, and session timelines via the CLI."
