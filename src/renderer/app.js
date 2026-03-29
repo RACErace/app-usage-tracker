@@ -939,20 +939,37 @@ function renderTimelineEmptyState(title, detail) {
   elements.timelineBoard.appendChild(empty);
 }
 
+function buildTimelineLaneKey(session) {
+  return [
+    session?.key || '',
+    session?.kind || '',
+    session?.trackingMode || '',
+    session?.trackingSource || ''
+  ].join('\u0001');
+}
+
 function buildTimelineLayout(sessions) {
+  const laneMap = new Map();
   const positioned = [...sessions]
     .sort((left, right) => (
       Number(left.startedAt) - Number(right.startedAt)
       || Number(left.endedAt) - Number(right.endedAt)
       || (left.key || '').localeCompare(right.key || '', 'en')
     ))
-    .map((session, laneIndex) => ({
-      ...session,
-      laneIndex
-    }));
+    .map((session) => {
+      const laneKey = buildTimelineLaneKey(session);
+      if (!laneMap.has(laneKey)) {
+        laneMap.set(laneKey, laneMap.size);
+      }
+
+      return {
+        ...session,
+        laneIndex: laneMap.get(laneKey)
+      };
+    });
 
   return {
-    laneCount: Math.max(positioned.length, 1),
+    laneCount: Math.max(laneMap.size, 1),
     sessions: positioned
   };
 }
