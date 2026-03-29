@@ -14,7 +14,7 @@ const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = requi
 const DATA_VERSION = 5;
 const POLL_INTERVAL_MS = 5000;
 const TIMELINE_SESSION_MERGE_GRACE_MS = POLL_INTERVAL_MS * 4;
-const TIMELINE_SESSION_STITCH_GAP_MS = 2 * 60 * 1000;
+const TIMELINE_SESSION_STITCH_GAP_MS = (2 * 60 * 1000) + TIMELINE_SESSION_MERGE_GRACE_MS;
 const SAVE_DEBOUNCE_MS = 1200;
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
 const MIN_IDLE_THRESHOLD_SECONDS = 60;
@@ -1184,7 +1184,7 @@ function isTimelinePlaybackSession(value) {
 }
 
 function buildTimelineSessionMergeSignature(value) {
-  if (isTimelineWebSession(value) || isTimelinePlaybackSession(value)) {
+  if (isTimelinePlaybackSession(value)) {
     return buildTimelineSessionSignature(value);
   }
 
@@ -1194,6 +1194,30 @@ function buildTimelineSessionMergeSignature(value) {
     sanitizeText(value?.trackingMode),
     sanitizeText(value?.trackingSource)
   ].join('\u0001');
+}
+
+function collapseMergedWebSessionMetadata(target, source, baseline = target) {
+  if (!isTimelineWebSession(target) || !isTimelineWebSession(source) || !baseline) {
+    return;
+  }
+
+  const pageDescriptorChanged = (
+    sanitizeText(baseline.pageTitle) !== sanitizeText(source.pageTitle)
+    || sanitizeText(baseline.url) !== sanitizeText(source.url)
+    || sanitizeText(baseline.path) !== sanitizeText(source.path)
+    || sanitizeText(baseline.pageHost) !== sanitizeText(source.pageHost)
+  );
+
+  if (!pageDescriptorChanged) {
+    return;
+  }
+
+  target.pageTitle = '';
+  target.subtitle = sanitizeText(target.label, target.host || target.subtitle);
+  target.windowTitle = '';
+  target.url = '';
+  target.pageHost = '';
+  target.path = '';
 }
 
 function canMergeTimelineSessions(left, right) {
@@ -1234,6 +1258,12 @@ function mergeTimelineSessionInto(target, source) {
     return target;
   }
 
+  const previousTarget = {
+    pageTitle: target.pageTitle,
+    url: target.url,
+    path: target.path,
+    pageHost: target.pageHost
+  };
   const targetStartedAt = Number(target.startedAt) || 0;
   const targetEndedAt = Number(target.endedAt) || 0;
   const sourceStartedAt = Number(source.startedAt) || 0;
@@ -1263,6 +1293,7 @@ function mergeTimelineSessionInto(target, source) {
   target.audioEndpointId = source.audioEndpointId || target.audioEndpointId;
   target.audioSessionIdentifier = source.audioSessionIdentifier || target.audioSessionIdentifier;
   target.audioSessionInstanceIdentifier = source.audioSessionInstanceIdentifier || target.audioSessionInstanceIdentifier;
+  collapseMergedWebSessionMetadata(target, source, previousTarget);
   if (target.isLive || source.isLive) {
     target.isLive = true;
   } else {

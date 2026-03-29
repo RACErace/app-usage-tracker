@@ -326,7 +326,7 @@ test('migration reapplies service rules to stored timeline sessions', () => {
   assert.equal(session.host, 'slack.com');
 });
 
-test('timeline merges contiguous slices and splits when page metadata changes', () => {
+test('timeline merges same-site slices even when page metadata changes', () => {
   const tracker = new UsageTracker({
     userDataPath: path.join(__dirname, '.tmp-tracker-timeline-merge'),
     onDataChanged: null
@@ -382,11 +382,11 @@ test('timeline merges contiguous slices and splits when page metadata changes', 
   }, startedAt + 120000, startedAt + 180000);
 
   const timeline = tracker.getTimeline('2026-03-28', startedAt + 180000);
-  assert.equal(timeline.sessions.length, 2);
-  assert.equal(timeline.sessions[0].durationMs, 120000);
-  assert.equal(timeline.sessions[0].pageTitle, 'OpenAI Docs');
-  assert.equal(timeline.sessions[1].durationMs, 60000);
-  assert.equal(timeline.sessions[1].pageTitle, 'API Pricing');
+  assert.equal(timeline.sessions.length, 1);
+  assert.equal(timeline.sessions[0].durationMs, 180000);
+  assert.equal(timeline.sessions[0].pageTitle, '');
+  assert.equal(timeline.sessions[0].url, '');
+  assert.equal(timeline.sessions[0].label, 'openai');
 });
 
 test('timeline merges contiguous desktop app slices even when window titles change', () => {
@@ -495,13 +495,13 @@ test('timeline merges near-contiguous desktop app slices without counting the ga
     ...baseEntry,
     subtitle: 'Second Task - Codex',
     windowTitle: 'Second Task - Codex'
-  }, startedAt + 70000, startedAt + 130000);
+  }, startedAt + 180000, startedAt + 240000);
 
-  const timeline = tracker.getTimeline('2026-03-28', startedAt + 130000);
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 240000);
   assert.equal(timeline.sessions.length, 1);
   assert.equal(timeline.sessions[0].durationMs, 120000);
   assert.equal(timeline.sessions[0].startedAt, startedAt);
-  assert.equal(timeline.sessions[0].endedAt, startedAt + 130000);
+  assert.equal(timeline.sessions[0].endedAt, startedAt + 240000);
 });
 
 test('timeline stitches the same app across a brief interruption by another app', () => {
