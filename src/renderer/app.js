@@ -5,8 +5,12 @@ const DEFAULT_BACKUP_STATUS = Object.freeze({
 const THEME_PREFERENCE_LIGHT = 'light';
 const THEME_PREFERENCE_DARK = 'dark';
 const THEME_PREFERENCE_SYSTEM = 'system';
-const TIMELINE_HOUR_HEIGHT = 76;
-const TIMELINE_MIN_SESSION_HEIGHT = 44;
+const TIMELINE_HOUR_WIDTH = 180;
+const TIMELINE_LANE_HEIGHT = 82;
+const TIMELINE_CARD_HEIGHT = 66;
+const TIMELINE_MIN_SESSION_WIDTH = 14;
+const TIMELINE_COMPACT_SESSION_WIDTH = 88;
+const TIMELINE_CONDENSED_SESSION_WIDTH = 168;
 const DEFAULT_CATEGORY_OPTIONS = Object.freeze([
   { id: 'work', label: '工作' },
   { id: 'entertainment', label: '娱乐' },
@@ -910,6 +914,7 @@ function renderTimelineEmptyState(title, detail) {
 
 function buildTimelineLayout(sessions) {
   const laneEndTimes = [];
+  const minDisplayDurationMs = (TIMELINE_MIN_SESSION_WIDTH / TIMELINE_HOUR_WIDTH) * 60 * 60 * 1000;
   const positioned = [...sessions]
     .sort((left, right) => (
       Number(left.startedAt) - Number(right.startedAt)
@@ -922,7 +927,10 @@ function buildTimelineLayout(sessions) {
         laneIndex = laneEndTimes.length;
       }
 
-      laneEndTimes[laneIndex] = Number(session.endedAt);
+      laneEndTimes[laneIndex] = Math.max(
+        Number(session.endedAt) || 0,
+        (Number(session.startedAt) || 0) + minDisplayDurationMs
+      );
       return {
         ...session,
         laneIndex
@@ -942,21 +950,22 @@ function renderTimelineBoard(sessions, dayKey) {
 
   elements.timelineBoard.replaceChildren();
 
-  const totalHeight = TIMELINE_HOUR_HEIGHT * 24;
   const layout = buildTimelineLayout(sessions);
-  const laneWidth = 100 / layout.laneCount;
+  const totalWidth = TIMELINE_HOUR_WIDTH * 24;
+  const totalHeight = layout.laneCount * TIMELINE_LANE_HEIGHT;
   const dayStart = new Date(`${dayKey}T00:00:00`).getTime();
 
   const grid = document.createElement('div');
   grid.className = 'timeline-grid';
+  grid.style.setProperty('--timeline-hour-width', `${TIMELINE_HOUR_WIDTH}px`);
 
   const axis = document.createElement('div');
   axis.className = 'timeline-hour-axis';
+  axis.style.width = `${totalWidth}px`;
 
   for (let hour = 0; hour < 24; hour += 1) {
     const label = document.createElement('div');
     label.className = 'timeline-hour-label';
-    label.style.height = `${TIMELINE_HOUR_HEIGHT}px`;
     label.textContent = `${padNumber(hour)}:00`;
     axis.appendChild(label);
   }
@@ -966,13 +975,25 @@ function renderTimelineBoard(sessions, dayKey) {
 
   const canvas = document.createElement('div');
   canvas.className = 'timeline-canvas';
+  canvas.style.width = `${totalWidth}px`;
   canvas.style.height = `${totalHeight}px`;
+
+  for (let laneIndex = 0; laneIndex < layout.laneCount; laneIndex += 1) {
+    const row = document.createElement('div');
+    row.className = 'timeline-lane-row';
+    row.style.top = `${laneIndex * TIMELINE_LANE_HEIGHT}px`;
+    row.style.height = `${TIMELINE_LANE_HEIGHT}px`;
+    canvas.appendChild(row);
+  }
 
   for (let hour = 0; hour < 24; hour += 1) {
     const slot = document.createElement('div');
     slot.className = 'timeline-hour-slot';
-    slot.style.top = `${hour * TIMELINE_HOUR_HEIGHT}px`;
-    slot.style.height = `${TIMELINE_HOUR_HEIGHT}px`;
+    slot.style.left = `${hour * TIMELINE_HOUR_WIDTH}px`;
+    slot.style.width = `${TIMELINE_HOUR_WIDTH}px`;
+    if (hour === 0) {
+      slot.style.borderLeft = '0';
+    }
     canvas.appendChild(slot);
   }
 
@@ -981,7 +1002,7 @@ function renderTimelineBoard(sessions, dayKey) {
     const minutesSinceStart = now.getHours() * 60 + now.getMinutes();
     const nowLine = document.createElement('div');
     nowLine.className = 'timeline-now-line';
-    nowLine.style.top = `${(minutesSinceStart / 60) * TIMELINE_HOUR_HEIGHT}px`;
+    nowLine.style.left = `${(minutesSinceStart / 60) * TIMELINE_HOUR_WIDTH}px`;
 
     const nowLabel = document.createElement('span');
     nowLabel.className = 'timeline-now-label';
@@ -994,9 +1015,17 @@ function renderTimelineBoard(sessions, dayKey) {
   layout.sessions.forEach((session) => {
     const startMinutes = Math.max((Number(session.startedAt) - dayStart) / 60000, 0);
     const endMinutes = Math.min((Number(session.endedAt) - dayStart) / 60000, 24 * 60);
-    const top = (startMinutes / 60) * TIMELINE_HOUR_HEIGHT;
-    const rawHeight = ((endMinutes - startMinutes) / 60) * TIMELINE_HOUR_HEIGHT;
-    const height = Math.max(rawHeight, TIMELINE_MIN_SESSION_HEIGHT);
+    const left = (startMinutes / 60) * TIMELINE_HOUR_WIDTH;
+    const rawWidth = ((endMinutes - startMinutes) / 60) * TIMELINE_HOUR_WIDTH;
+    const width = Math.max(rawWidth, TIMELINE_MIN_SESSION_WIDTH);
+    const top = (session.laneIndex * TIMELINE_LANE_HEIGHT) + ((TIMELINE_LANE_HEIGHT - TIMELINE_CARD_HEIGHT) / 2);
+    const titleLabel = getTimelineSessionTitle(session);
+    const timeLabel = `${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
+    const metaLabel = [getTimelineSessionSecondary(session), getTimelineSessionKindLabel(session)]
+      .filter(Boolean)
+      .join(' · ');
+    const isCompact = width < TIMELINE_COMPACT_SESSION_WIDTH;
+    const isCondensed = width < TIMELINE_CONDENSED_SESSION_WIDTH;
 
     const card = document.createElement('button');
     card.className = 'timeline-session-card';
@@ -1007,35 +1036,40 @@ function renderTimelineBoard(sessions, dayKey) {
     if (session.isLive) {
       card.classList.add('live');
     }
+    if (isCompact) {
+      card.classList.add('compact');
+    } else if (isCondensed) {
+      card.classList.add('condensed');
+    }
     card.style.top = `${top}px`;
-    card.style.height = `${height}px`;
-    card.style.left = `calc(${session.laneIndex * laneWidth}% + 4px)`;
-    card.style.width = `calc(${laneWidth}% - 8px)`;
+    card.style.height = `${TIMELINE_CARD_HEIGHT}px`;
+    card.style.left = `${left}px`;
+    card.style.width = `${width}px`;
     card.style.setProperty('--session-color', session.color || 'var(--accent)');
-    card.title = `${getTimelineSessionTitle(session)}\n${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
-    card.setAttribute('aria-label', `查看 ${getTimelineSessionTitle(session)} 的详情`);
+    card.title = [titleLabel, timeLabel, metaLabel].filter(Boolean).join('\n');
+    card.setAttribute('aria-label', `查看 ${titleLabel} 的详情`);
     card.addEventListener('click', () => openDetail(session.key));
 
-    const title = document.createElement('strong');
-    title.className = 'timeline-session-title';
-    title.textContent = getTimelineSessionTitle(session);
+    if (!isCompact) {
+      const title = document.createElement('strong');
+      title.className = 'timeline-session-title';
+      title.textContent = titleLabel;
+      card.appendChild(title);
 
-    const time = document.createElement('span');
-    time.className = 'timeline-session-time';
-    time.textContent = `${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
+      const time = document.createElement('span');
+      time.className = 'timeline-session-time';
+      time.textContent = timeLabel;
+      card.appendChild(time);
 
-    const meta = document.createElement('span');
-    meta.className = 'timeline-session-meta';
-    meta.textContent = [getTimelineSessionSecondary(session), getTimelineSessionKindLabel(session)]
-      .filter(Boolean)
-      .join(' · ');
-
-    card.append(title, time);
-    if (meta.textContent) {
-      card.appendChild(meta);
+      if (metaLabel && !isCondensed) {
+        const meta = document.createElement('span');
+        meta.className = 'timeline-session-meta';
+        meta.textContent = metaLabel;
+        card.appendChild(meta);
+      }
     }
 
-    if (session.isLive) {
+    if (session.isLive && !isCompact && !isCondensed) {
       const liveBadge = document.createElement('span');
       liveBadge.className = 'timeline-session-badge';
       liveBadge.textContent = '进行中';

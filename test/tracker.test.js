@@ -389,6 +389,63 @@ test('timeline merges contiguous slices and splits when page metadata changes', 
   assert.equal(timeline.sessions[1].pageTitle, 'API Pricing');
 });
 
+test('timeline merges contiguous desktop app slices even when window titles change', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-timeline-app-merge'),
+    onDataChanged: null
+  });
+
+  const startedAt = new Date(2026, 2, 28, 16, 0, 0, 0).getTime();
+  const baseEntry = {
+    key: 'app:vscode',
+    kind: 'app',
+    label: 'Visual Studio Code',
+    subtitle: 'app.js - Visual Studio Code',
+    appName: 'Visual Studio Code',
+    browserFamily: null,
+    pageTitle: '',
+    windowTitle: 'app.js - Visual Studio Code',
+    url: '',
+    host: '',
+    pageHost: '',
+    path: '',
+    executablePath: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#1c8cff',
+    startedAt,
+    lastSeenAt: startedAt
+  };
+
+  tracker.allocateDuration(baseEntry, startedAt, startedAt + 60000);
+  tracker.allocateDuration({
+    ...baseEntry,
+    subtitle: 'tracker.js - Visual Studio Code',
+    windowTitle: 'tracker.js - Visual Studio Code'
+  }, startedAt + 60000, startedAt + 120000);
+
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 120000);
+  assert.equal(timeline.sessions.length, 1);
+  assert.equal(timeline.sessions[0].durationMs, 120000);
+  assert.equal(timeline.sessions[0].windowTitle, 'tracker.js - Visual Studio Code');
+});
+
 test('timeline projects live sessions for the current day without waiting for a save', () => {
   const originalNow = Date.now;
   const startedAt = new Date(2026, 2, 29, 10, 0, 0, 0).getTime();
