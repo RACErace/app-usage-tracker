@@ -23,7 +23,7 @@
 
 ---
 
-App Usage Tracker records which desktop app is active, which website is open in the browser, and whether a supported music player is actually playing. It turns those raw signals into daily rankings, 7-day trends, detail views, local backups, and a CLI you can query from scripts or AI tools.
+App Usage Tracker records which desktop app is active, which website is open in the browser, and whether a supported music player is actually playing. It turns those raw signals into daily rankings, 7-day trends, real session timelines, detail views, local backups, and a CLI you can query from scripts or AI tools.
 
 - Attribute browser time to sites instead of only browser apps
 - Count actual music playback even when the player stays in the background
@@ -65,8 +65,9 @@ It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker i
 |-----------|---------------|
 | Daily view | Shows totals, rankings, browser-recognition status, and hourly distribution for one day |
 | 7-day trends | Aggregates the last seven days and highlights weekly totals plus daily averages |
+| Timeline view | Replays one day's stored sessions with real start/end times, overlap lanes, and clickable detail entry points |
 | Item detail view | Displays today's hourly breakdown, recent-day history, metadata, and page breakdown where available |
-| Local CLI | Queries days, top items, searches, details, and full snapshots from local data |
+| Local CLI | Queries days, top items, timelines, searches, details, and full snapshots from local data |
 | AI skill files | Ships ready-to-use skills for Codex, OpenClaw, or similar assistants |
 
 ### Control and Reliability
@@ -75,7 +76,7 @@ It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker i
 |-----------|---------------|
 | Custom service rules | Merges desktop apps and website domains into one logical service |
 | Category rules | Tags items as Work, Entertainment, Study, or Communication |
-| Visibility controls | Hides selected items from totals, rankings, searches, and snapshots |
+| Visibility controls | Hides selected items from totals, rankings, timelines, searches, and snapshots |
 | Tracking protection | Supports manual pause, idle pause, and lock-screen pause |
 | Desktop behavior | Supports tray mode, auto-launch, close behavior, and light/dark/system themes |
 | Backup and recovery | Exports/imports JSON backups and can generate automatic local backups |
@@ -126,7 +127,9 @@ Notes:
 
 | Screen | Purpose |
 |-------|---------|
-| Overview | Daily and 7-day charts, rankings, current totals, and browser-extension status |
+| Daily | Daily charts, rankings, current totals, and browser-extension status |
+| Last 7 Days | Weekly aggregation of recent totals, rankings, and daily rhythm |
+| Timeline | Session-by-session day replay with real start/end times and overlapping playback or foreground blocks |
 | Detail | Hourly breakdown, recent-day history, metadata, and page breakdown for tracked sites |
 | Settings | Startup, tray behavior, pause rules, backup, visibility, theme, service rules, and category rules |
 
@@ -195,6 +198,7 @@ From the repository:
 ```powershell
 npm run query -- days --format json
 npm run query -- top --range day --day latest --limit 10 --format json
+npm run query -- timeline --day latest --limit 20 --format json
 npm run query -- search --query "ChatGPT" --format json
 npm run query -- detail --key service:chatgpt --format json
 npm run query -- snapshot --format json
@@ -211,7 +215,8 @@ Notes:
 - The installer adds the app install directory to the current user's `PATH`
 - Reopen PowerShell, Command Prompt, or Windows Terminal if the shell was already open before installation
 - The installed wrapper is available at `%LOCALAPPDATA%\Programs\app-usage-tracker\app-usage-tracker-cli.cmd`
-- The CLI respects visibility settings from `settings.json`, so hidden items are excluded from totals, rankings, searches, and snapshots
+- The CLI respects visibility settings from `settings.json`, so hidden items are excluded from totals, rankings, timelines, searches, and snapshots
+- `timeline` returns real stored sessions when available; older days collected before the session-detail upgrade may only expose aggregated totals
 - Prefer `--format json` for scripts, agents, and automation
 
 Supported data-location overrides:
@@ -225,7 +230,7 @@ Supported data-location overrides:
 
 ## AI Skill Files
 
-The repository includes AI skill files in [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) so assistants can query local usage data through the CLI.
+The repository includes AI skill files in [`skills/app-usage-tracker-query`](./skills/app-usage-tracker-query) so assistants can query local usage data and timelines through the CLI.
 
 The GitHub Release workflow also publishes a `skills.zip` asset alongside Windows packages.
 

@@ -1,6 +1,6 @@
 ---
 name: app-usage-tracker-query
-description: Query local App Usage Tracker history through the bundled CLI. Use when an AI agent needs to inspect available tracking dates, fetch top apps or sites for a day or the recent week, search historical items by name/host/URL, or retrieve detailed usage history for a specific tracked item from this repository's usage data file.
+description: Query local App Usage Tracker history through the bundled CLI. Use when an AI agent needs to inspect available tracking dates, fetch top apps or sites for a day or the recent week, replay a day's real session timeline, search historical items by name/host/URL, or retrieve detailed usage history for a specific tracked item from this repository's usage data file.
 ---
 
 # App Usage Tracker Query
@@ -27,8 +27,9 @@ node src/cli/query.js <command> ...
 
 1. Run `days` first when you need to know which dates exist.
 2. Run `top --range day` or `top --range week` for rankings and totals.
-3. Run `search --query "<name>"` before requesting item details if the item key is unknown.
-4. Run `detail --key "<itemKey>"` once you have the exact key.
+3. Run `timeline --day <day>` when you need real session chronology with start/end times for one tracked day.
+4. Run `search --query "<name>"` before requesting item details if the item key is unknown.
+5. Run `detail --key "<itemKey>"` once you have the exact key.
 
 Do not guess hashed item keys. Use `search` to resolve them first.
 
@@ -50,6 +51,12 @@ Get the recent 7-day ranking:
 
 ```powershell
 app-usage-tracker-cli top --range week --limit 10 --format json
+```
+
+Get a day's real session timeline:
+
+```powershell
+app-usage-tracker-cli timeline --day latest --limit 20 --format json
 ```
 
 Search items by label, host, page title, URL, or key:
@@ -84,7 +91,8 @@ On Windows, the default data file is `%APPDATA%/app-usage-tracker/usage-data.jso
 ## Notes
 
 - The CLI reads the on-disk `usage-data.json`; the newest few seconds of live activity may not appear until the desktop app saves.
-- The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, searches, and snapshots.
+- The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, timelines, searches, and snapshots.
+- `timeline` returns stored session slices when they exist. Older aggregated-only days may report totals but no session list.
 - Use `--format json` for agent workflows.
 - If `detail --query` is ambiguous, run `search` first and then call `detail --key`.
 - The installer adds the app install directory to the current user's `PATH`, but a shell opened before installation may need to be restarted before the command is available.

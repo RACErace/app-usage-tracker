@@ -362,6 +362,89 @@ function summarizeItem(item) {
   };
 }
 
+function formatClockTime(timestamp, { includeSeconds = false } = {}) {
+  const numericTimestamp = Number(timestamp) || 0;
+  if (!numericTimestamp) {
+    return includeSeconds ? '--:--:--' : '--:--';
+  }
+
+  const date = new Date(numericTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return includeSeconds ? '--:--:--' : '--:--';
+  }
+
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  if (!includeSeconds) {
+    return `${hours}:${minutes}`;
+  }
+
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function getTimelineSessionKindLabel(session) {
+  if (session?.trackingMode === 'playback') {
+    return session?.trackingSource || 'playback';
+  }
+
+  if (session?.url || session?.kind === 'site') {
+    return 'web';
+  }
+
+  return 'foreground';
+}
+
+function summarizeSession(session) {
+  const startedAt = Number(session?.startedAt) || 0;
+  const endedAt = Number(session?.endedAt) || 0;
+  const durationMs = Number(session?.durationMs) || Math.max(endedAt - startedAt, 0);
+
+  return {
+    key: session?.key,
+    kind: session?.kind,
+    kindLabel: getTimelineSessionKindLabel(session),
+    label: session?.label,
+    subtitle: session?.subtitle,
+    appName: session?.appName,
+    browserFamily: session?.browserFamily || null,
+    categoryId: session?.categoryId || '',
+    categoryLabel: session?.categoryLabel || '',
+    pageTitle: session?.pageTitle || '',
+    host: session?.host || '',
+    pageHost: session?.pageHost || '',
+    url: session?.url || '',
+    path: session?.path || '',
+    executablePath: session?.executablePath || '',
+    trackingMode: session?.trackingMode || '',
+    trackingSource: session?.trackingSource || '',
+    sourceAppUserModelId: session?.sourceAppUserModelId || '',
+    mediaTitle: session?.mediaTitle || '',
+    mediaArtist: session?.mediaArtist || '',
+    mediaAlbumTitle: session?.mediaAlbumTitle || '',
+    playbackStatus: session?.playbackStatus || '',
+    playbackType: session?.playbackType || '',
+    processId: Number(session?.processId) || 0,
+    processName: session?.processName || '',
+    audioSessionState: session?.audioSessionState || '',
+    audioPeakValue: Number(session?.audioPeakValue) || 0,
+    audioIsMuted: Boolean(session?.audioIsMuted),
+    audioEndpointId: session?.audioEndpointId || '',
+    audioSessionIdentifier: session?.audioSessionIdentifier || '',
+    audioSessionInstanceIdentifier: session?.audioSessionInstanceIdentifier || '',
+    color: session?.color || '',
+    startedAt,
+    endedAt,
+    startedAtIso: startedAt ? new Date(startedAt).toISOString() : '',
+    endedAtIso: endedAt ? new Date(endedAt).toISOString() : '',
+    startClock: formatClockTime(startedAt, { includeSeconds: true }),
+    endClock: formatClockTime(endedAt, { includeSeconds: true }),
+    durationMs,
+    durationMinutes: toMinutes(durationMs),
+    isLive: Boolean(session?.isLive)
+  };
+}
+
 function getItemSearchFields(item) {
   return [
     item.key,
@@ -478,11 +561,24 @@ function toTextLinesForItems(items) {
   });
 }
 
+function toTextLinesForSessions(sessions) {
+  if (!sessions.length) {
+    return ['No timeline sessions.'];
+  }
+
+  return sessions.map((session, index) => {
+    const suffix = session.mediaTitle || session.host || session.appName || session.processName || session.url || '-';
+    const liveSuffix = session.isLive ? ' | live' : '';
+    return `${index + 1}. ${session.startClock}-${session.endClock} | ${session.label} | ${formatDuration(session.durationMs)} | ${session.kindLabel} | ${suffix} | ${session.key}${liveSuffix}`;
+  });
+}
+
 function printHelp() {
   process.stdout.write([
     'Usage:',
     '  node src/cli/query.js days [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js top [--range day|week] [--day YYYY-MM-DD|latest] [--limit N] [--format json|text] [--data-file <path>]',
+    '  node src/cli/query.js timeline [--day YYYY-MM-DD|latest] [--limit N] [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js search --query <text> [--limit N] [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js detail (--key <itemKey> | --query <text>) [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js snapshot [--format json|text] [--data-file <path>]',
@@ -496,6 +592,7 @@ function printHelp() {
     '',
     'Examples:',
     '  npm run query -- top --range day --day latest --limit 5 --format json',
+    '  npm run query -- timeline --day latest --limit 20 --format json',
     '  npm run query -- search --query "ChatGPT" --format json',
     '  npm run query -- detail --key service:chatgpt --format json'
   ].join('\n'));
@@ -609,6 +706,69 @@ async function runTop(args) {
     `Total: ${formatDuration(payload.totalMs)}`,
     ...toTextLinesForItems(payload.items)
   ];
+  process.stdout.write(lines.join('\n'));
+}
+
+async function runTimeline(args) {
+  const { values } = parseCommandArgs(args, {
+    day: { type: 'string' },
+    limit: { type: 'string' }
+  });
+
+  if (values.help) {
+    printHelp();
+    return;
+  }
+
+  const format = assertFormat(values);
+  const limit = parseLimit(values.limit, 50);
+  const { tracker, paths, snapshot, hiddenItemKeySet } = await loadTracker(values);
+  const dayKey = resolveDayKey(snapshot, values.day);
+  const timeline = tracker.getTimeline(dayKey);
+  const visibleSessions = (timeline.sessions || []).filter((session) => !hiddenItemKeySet.has(session.key));
+  const totalMs = Number(snapshot.daily.days?.[timeline.dayKey]?.totalMs)
+    || visibleSessions.reduce((sum, session) => sum + (Number(session.durationMs) || 0), 0);
+  const sessions = visibleSessions.slice(0, limit).map(summarizeSession);
+  const payload = {
+    kind: 'timeline',
+    dataFilePath: paths.dataFilePath,
+    dayKey: timeline.dayKey,
+    availableDays: timeline.availableDays,
+    totalMs,
+    totalMinutes: toMinutes(totalMs),
+    sessionCount: visibleSessions.length,
+    returnedSessionCount: sessions.length,
+    limit,
+    hasStoredSessions: timeline.hasStoredSessions,
+    hasAggregatedData: timeline.hasAggregatedData || totalMs > 0,
+    sessions
+  };
+
+  if (format === 'json') {
+    process.stdout.write(toJsonOutput(payload));
+    return;
+  }
+
+  const sessionSummary = payload.sessionCount > payload.returnedSessionCount
+    ? `${payload.sessionCount} (showing ${payload.returnedSessionCount})`
+    : String(payload.sessionCount);
+  const lines = [
+    `Data file: ${payload.dataFilePath}`,
+    `Day: ${payload.dayKey || '-'}`,
+    `Total: ${formatDuration(payload.totalMs)}`,
+    `Sessions: ${sessionSummary}`
+  ];
+
+  if (payload.sessions.length) {
+    lines.push(...toTextLinesForSessions(payload.sessions));
+  } else if (payload.hasStoredSessions) {
+    lines.push('No visible timeline sessions after applying current visibility settings.');
+  } else if (payload.hasAggregatedData) {
+    lines.push('No stored timeline sessions for this day. Only aggregated totals are available.');
+  } else {
+    lines.push('No timeline sessions for this day.');
+  }
+
   process.stdout.write(lines.join('\n'));
 }
 
@@ -802,6 +962,9 @@ async function main(argv = process.argv.slice(2)) {
       return;
     case 'top':
       await runTop(args);
+      return;
+    case 'timeline':
+      await runTimeline(args);
       return;
     case 'search':
       await runSearch(args);
