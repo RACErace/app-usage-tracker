@@ -504,6 +504,78 @@ test('timeline merges near-contiguous desktop app slices without counting the ga
   assert.equal(timeline.sessions[0].endedAt, startedAt + 130000);
 });
 
+test('timeline stitches the same app across a brief interruption by another app', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-timeline-app-interruption-merge'),
+    onDataChanged: null
+  });
+
+  const startedAt = new Date(2026, 2, 28, 18, 0, 0, 0).getTime();
+  const appA = {
+    key: 'app:codex',
+    kind: 'app',
+    label: 'Codex',
+    subtitle: 'Agent Session - Codex',
+    appName: 'Codex',
+    browserFamily: null,
+    pageTitle: '',
+    windowTitle: 'Agent Session - Codex',
+    url: '',
+    host: '',
+    pageHost: '',
+    path: '',
+    executablePath: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Codex\\Codex.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#22c55e',
+    startedAt,
+    lastSeenAt: startedAt
+  };
+  const appB = {
+    ...appA,
+    key: 'app:notion',
+    label: 'Notion',
+    subtitle: 'Docs - Notion',
+    appName: 'Notion',
+    windowTitle: 'Docs - Notion',
+    executablePath: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Notion\\Notion.exe',
+    color: '#1c8cff'
+  };
+
+  tracker.allocateDuration(appA, startedAt, startedAt + 60000);
+  tracker.allocateDuration(appB, startedAt + 60000, startedAt + 100000);
+  tracker.allocateDuration({
+    ...appA,
+    subtitle: 'Second Task - Codex',
+    windowTitle: 'Second Task - Codex'
+  }, startedAt + 100000, startedAt + 160000);
+
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 160000);
+  assert.equal(timeline.sessions.length, 2);
+  assert.equal(timeline.sessions[0].key, 'app:codex');
+  assert.equal(timeline.sessions[0].durationMs, 120000);
+  assert.equal(timeline.sessions[0].startedAt, startedAt);
+  assert.equal(timeline.sessions[0].endedAt, startedAt + 160000);
+  assert.equal(timeline.sessions[1].key, 'app:notion');
+  assert.equal(timeline.sessions[1].durationMs, 40000);
+});
+
 test('timeline projects live sessions for the current day without waiting for a save', () => {
   const originalNow = Date.now;
   const startedAt = new Date(2026, 2, 29, 10, 0, 0, 0).getTime();
