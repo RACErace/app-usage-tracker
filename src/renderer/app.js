@@ -915,6 +915,27 @@ function getTimelineSessionKindLabel(session) {
   return '前台窗口';
 }
 
+function buildTimelineTooltipRows(session, secondaryLabel, kindLabel, sessionColor) {
+  const rows = [];
+
+  if (kindLabel) {
+    rows.push({
+      chipColor: sessionColor,
+      text: kindLabel
+    });
+  }
+
+  if (secondaryLabel) {
+    rows.push({ text: secondaryLabel });
+  }
+
+  if (session.isLive) {
+    rows.push({ text: '当前正在进行' });
+  }
+
+  return rows;
+}
+
 function renderTimelineEmptyState(title, detail) {
   if (!elements.timelineBoard) {
     return;
@@ -979,6 +1000,7 @@ function renderTimelineBoard(sessions, dayKey) {
     return;
   }
 
+  hideTimelineTooltip();
   elements.timelineBoard.replaceChildren();
 
   const layout = buildTimelineLayout(sessions);
@@ -1052,7 +1074,9 @@ function renderTimelineBoard(sessions, dayKey) {
     const top = (session.laneIndex * TIMELINE_LANE_HEIGHT) + ((TIMELINE_LANE_HEIGHT - TIMELINE_CARD_HEIGHT) / 2);
     const titleLabel = getTimelineSessionTitle(session);
     const timeLabel = `${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
-    const metaLabel = [getTimelineSessionSecondary(session), getTimelineSessionKindLabel(session)]
+    const secondaryLabel = getTimelineSessionSecondary(session);
+    const kindLabel = getTimelineSessionKindLabel(session);
+    const metaLabel = [secondaryLabel, kindLabel]
       .filter(Boolean)
       .join(' · ');
     const isCompact = width < TIMELINE_COMPACT_SESSION_WIDTH;
@@ -1077,11 +1101,29 @@ function renderTimelineBoard(sessions, dayKey) {
     card.style.left = `${left}px`;
     card.style.width = `${width}px`;
     const sessionColor = session.color || 'var(--accent)';
+    const tooltipRows = buildTimelineTooltipRows(session, secondaryLabel, kindLabel, sessionColor);
     card.style.setProperty('--session-color', sessionColor);
     card.style.setProperty('--session-color-rgb', colorToRgbTriplet(sessionColor) || '28, 132, 255');
-    card.title = [titleLabel, timeLabel, metaLabel].filter(Boolean).join('\n');
-    card.setAttribute('aria-label', `查看 ${titleLabel} 的详情`);
+    card.setAttribute(
+      'aria-label',
+      [`查看 ${titleLabel} 的详情`, timeLabel, metaLabel, session.isLive ? '当前正在进行' : '']
+        .filter(Boolean)
+        .join('，')
+    );
     card.addEventListener('click', () => openDetail(session.key));
+    const showCardTooltip = () => {
+      showTimelineTooltip({
+        anchorRect: card.getBoundingClientRect(),
+        titleText: titleLabel,
+        timeText: timeLabel,
+        rows: tooltipRows,
+        sessionColor
+      });
+    };
+    card.addEventListener('mouseenter', showCardTooltip);
+    card.addEventListener('focus', showCardTooltip);
+    card.addEventListener('mouseleave', hideTimelineTooltip);
+    card.addEventListener('blur', hideTimelineTooltip);
 
     if (!isCompact) {
       const title = document.createElement('strong');
@@ -1106,6 +1148,7 @@ function renderTimelineBoard(sessions, dayKey) {
     canvas.appendChild(card);
   });
 
+  elements.timelineBoard.onscroll = hideTimelineTooltip;
   canvasWrap.appendChild(canvas);
   grid.append(axis, canvasWrap);
   elements.timelineBoard.appendChild(grid);
@@ -1444,30 +1487,8 @@ function showTooltip({ tooltip, rect, chartPoint, valueText, labelText, rows = [
     tooltip.appendChild(labelNode);
   }
 
-  if (rows.length) {
-    const listNode = document.createElement('div');
-    listNode.className = 'tooltip-list';
-
-    rows.forEach((row) => {
-      const rowNode = document.createElement('div');
-      rowNode.className = 'tooltip-row';
-
-      if (row.chipText) {
-        const chipNode = document.createElement('span');
-        chipNode.className = 'tooltip-chip';
-        chipNode.textContent = row.chipText;
-        if (row.chipColor) {
-          chipNode.style.background = row.chipColor;
-        }
-        rowNode.appendChild(chipNode);
-      }
-
-      const textNode = document.createElement('span');
-      textNode.textContent = row.text;
-      rowNode.appendChild(textNode);
-      listNode.appendChild(rowNode);
-    });
-
+  const listNode = createTooltipList(rows);
+  if (listNode) {
     tooltip.appendChild(listNode);
   }
 
@@ -1476,6 +1497,111 @@ function showTooltip({ tooltip, rect, chartPoint, valueText, labelText, rows = [
   const relativeY = chartPoint.y / rect.height;
   tooltip.style.left = `${relativeX * 100}%`;
   tooltip.style.top = `${Math.max(relativeY * 100 - 4, 15)}%`;
+}
+
+function createTooltipList(rows) {
+  if (!rows.length) {
+    return null;
+  }
+
+  const listNode = document.createElement('div');
+  listNode.className = 'tooltip-list';
+
+  rows.forEach((row) => {
+    const rowNode = document.createElement('div');
+    rowNode.className = 'tooltip-row';
+
+    if (row.chipText || row.chipColor) {
+      const chipNode = document.createElement('span');
+      chipNode.className = 'tooltip-chip';
+      chipNode.textContent = row.chipText || '';
+      if (row.chipColor) {
+        chipNode.style.background = row.chipColor;
+      }
+      if (!row.chipText) {
+        chipNode.setAttribute('aria-hidden', 'true');
+      }
+      rowNode.appendChild(chipNode);
+    }
+
+    const textNode = document.createElement('span');
+    textNode.textContent = row.text;
+    rowNode.appendChild(textNode);
+    listNode.appendChild(rowNode);
+  });
+
+  return listNode;
+}
+
+function getTimelineTooltipElement() {
+  let tooltip = document.getElementById('timeline-session-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'timeline-session-tooltip';
+    tooltip.className = 'chart-tooltip timeline-session-tooltip hidden';
+    document.body.appendChild(tooltip);
+  }
+
+  return tooltip;
+}
+
+function hideTimelineTooltip() {
+  const tooltip = document.getElementById('timeline-session-tooltip');
+  if (!tooltip) {
+    return;
+  }
+
+  tooltip.classList.add('hidden');
+  tooltip.classList.remove('below');
+}
+
+function showTimelineTooltip({ anchorRect, titleText, timeText, rows = [], sessionColor }) {
+  if (!anchorRect) {
+    return;
+  }
+
+  const tooltip = getTimelineTooltipElement();
+  const accentRgb = colorToRgbTriplet(sessionColor) || '28, 132, 255';
+  tooltip.replaceChildren();
+  tooltip.style.setProperty('--timeline-tooltip-accent', sessionColor || 'var(--accent)');
+  tooltip.style.setProperty('--timeline-tooltip-accent-rgb', accentRgb);
+
+  const valueNode = document.createElement('span');
+  valueNode.className = 'tooltip-value';
+  valueNode.textContent = titleText;
+  tooltip.appendChild(valueNode);
+
+  if (timeText) {
+    const labelNode = document.createElement('span');
+    labelNode.className = 'tooltip-label';
+    labelNode.textContent = timeText;
+    tooltip.appendChild(labelNode);
+  }
+
+  const listNode = createTooltipList(rows);
+  if (listNode) {
+    tooltip.appendChild(listNode);
+  }
+
+  tooltip.classList.remove('hidden');
+  tooltip.classList.remove('below');
+  tooltip.style.left = '12px';
+  tooltip.style.top = '12px';
+
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const margin = 12;
+  const gap = 14;
+  let left = anchorRect.left + (anchorRect.width / 2) - (tooltipRect.width / 2);
+  left = Math.max(margin, Math.min(left, window.innerWidth - tooltipRect.width - margin));
+
+  let top = anchorRect.top - tooltipRect.height - gap;
+  if (top < margin) {
+    top = Math.min(anchorRect.bottom + gap, window.innerHeight - tooltipRect.height - margin);
+    tooltip.classList.add('below');
+  }
+
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
 }
 
 function updateHeader() {
@@ -1509,6 +1635,7 @@ function updateTopTabs() {
 
 function showScreen(screen) {
   state.activeScreen = screen;
+  hideTimelineTooltip();
   elements.overviewScreen.classList.toggle('active', screen === 'overview');
   elements.timelineScreen.classList.toggle('active', screen === 'timeline');
   elements.detailScreen.classList.toggle('active', screen === 'detail');
