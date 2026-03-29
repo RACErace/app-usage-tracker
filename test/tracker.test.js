@@ -446,6 +446,64 @@ test('timeline merges contiguous desktop app slices even when window titles chan
   assert.equal(timeline.sessions[0].windowTitle, 'tracker.js - Visual Studio Code');
 });
 
+test('timeline merges near-contiguous desktop app slices without counting the gap as usage', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-timeline-app-gap-merge'),
+    onDataChanged: null
+  });
+
+  const startedAt = new Date(2026, 2, 28, 17, 0, 0, 0).getTime();
+  const baseEntry = {
+    key: 'app:codex',
+    kind: 'app',
+    label: 'Codex',
+    subtitle: 'Agent Session - Codex',
+    appName: 'Codex',
+    browserFamily: null,
+    pageTitle: '',
+    windowTitle: 'Agent Session - Codex',
+    url: '',
+    host: '',
+    pageHost: '',
+    path: '',
+    executablePath: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Codex\\Codex.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#22c55e',
+    startedAt,
+    lastSeenAt: startedAt
+  };
+
+  tracker.allocateDuration(baseEntry, startedAt, startedAt + 60000);
+  tracker.allocateDuration({
+    ...baseEntry,
+    subtitle: 'Second Task - Codex',
+    windowTitle: 'Second Task - Codex'
+  }, startedAt + 70000, startedAt + 130000);
+
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 130000);
+  assert.equal(timeline.sessions.length, 1);
+  assert.equal(timeline.sessions[0].durationMs, 120000);
+  assert.equal(timeline.sessions[0].startedAt, startedAt);
+  assert.equal(timeline.sessions[0].endedAt, startedAt + 130000);
+});
+
 test('timeline projects live sessions for the current day without waiting for a save', () => {
   const originalNow = Date.now;
   const startedAt = new Date(2026, 2, 29, 10, 0, 0, 0).getTime();
