@@ -11,7 +11,7 @@ const {
 } = require('./customization');
 const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = require('./json-storage');
 
-const DATA_VERSION = 4;
+const DATA_VERSION = 5;
 const POLL_INTERVAL_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1200;
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
@@ -1055,6 +1055,33 @@ function createEmptyData() {
   return { version: DATA_VERSION, days: {} };
 }
 
+function createEmptyDay() {
+  return {
+    totalMs: 0,
+    items: {},
+    sessions: []
+  };
+}
+
+function forEachDaySlice(startTimestamp, endTimestamp, callback) {
+  let cursor = startTimestamp;
+  while (cursor < endTimestamp) {
+    const currentDate = new Date(cursor);
+    const dayBoundary = new Date(currentDate);
+    dayBoundary.setHours(24, 0, 0, 0);
+    const sliceEnd = Math.min(endTimestamp, dayBoundary.getTime());
+
+    callback({
+      date: currentDate,
+      startTimestamp: cursor,
+      endTimestamp: sliceEnd,
+      durationMs: sliceEnd - cursor
+    });
+
+    cursor = sliceEnd;
+  }
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1125,6 +1152,141 @@ function cloneStoredPageBuckets(source) {
   }
 
   return result;
+}
+
+function buildTimelineSessionSignature(value) {
+  return [
+    sanitizeText(value?.key),
+    sanitizeText(value?.trackingMode),
+    sanitizeText(value?.trackingSource),
+    sanitizeText(value?.label),
+    sanitizeText(value?.subtitle),
+    sanitizeText(value?.windowTitle),
+    sanitizeText(value?.pageTitle),
+    sanitizeText(value?.url),
+    sanitizeText(value?.host),
+    sanitizeText(value?.pageHost),
+    sanitizeText(value?.path),
+    sanitizeText(value?.mediaTitle),
+    sanitizeText(value?.mediaArtist),
+    sanitizeText(value?.processName)
+  ].join('\u0001');
+}
+
+function cloneStoredSession(session) {
+  const startedAt = Number(session?.startedAt) || 0;
+  const endedAt = Number(session?.endedAt) || 0;
+  if (!startedAt || !endedAt || endedAt <= startedAt) {
+    return null;
+  }
+
+  const cloned = {
+    key: sanitizeText(session?.key),
+    kind: sanitizeText(session?.kind, 'app'),
+    label: sanitizeText(session?.label, session?.appName || '应用'),
+    subtitle: sanitizeText(session?.subtitle, session?.windowTitle || session?.pageTitle || ''),
+    appName: sanitizeText(session?.appName, session?.label || ''),
+    browserFamily: sanitizeText(session?.browserFamily),
+    pageTitle: sanitizeText(session?.pageTitle),
+    windowTitle: sanitizeText(session?.windowTitle),
+    url: sanitizeText(session?.url),
+    host: sanitizeText(session?.host).toLowerCase(),
+    pageHost: sanitizeText(session?.pageHost).toLowerCase(),
+    path: sanitizeText(session?.path),
+    executablePath: sanitizeText(session?.executablePath),
+    categoryId: normalizeCategoryId(session?.categoryId),
+    categoryLabel: sanitizeText(session?.categoryLabel || getCategoryLabel(session?.categoryId)),
+    trackingMode: sanitizeText(session?.trackingMode),
+    trackingSource: sanitizeText(session?.trackingSource),
+    sourceAppUserModelId: sanitizeText(session?.sourceAppUserModelId),
+    mediaTitle: sanitizeText(session?.mediaTitle),
+    mediaArtist: sanitizeText(session?.mediaArtist),
+    mediaAlbumTitle: sanitizeText(session?.mediaAlbumTitle),
+    playbackStatus: sanitizeText(session?.playbackStatus),
+    playbackType: sanitizeText(session?.playbackType),
+    processId: Number(session?.processId) || 0,
+    processName: sanitizeText(session?.processName),
+    audioSessionState: sanitizeText(session?.audioSessionState),
+    audioPeakValue: Number(session?.audioPeakValue) || 0,
+    audioIsMuted: Boolean(session?.audioIsMuted),
+    audioEndpointId: sanitizeText(session?.audioEndpointId),
+    audioSessionIdentifier: sanitizeText(session?.audioSessionIdentifier),
+    audioSessionInstanceIdentifier: sanitizeText(session?.audioSessionInstanceIdentifier),
+    color: sanitizeText(session?.color, getColorFromKey(sanitizeText(session?.key))),
+    startedAt,
+    endedAt,
+    durationMs: Math.max(endedAt - startedAt, 0)
+  };
+
+  if (session?.isLive) {
+    cloned.isLive = true;
+  }
+
+  return cloned;
+}
+
+function cloneStoredSessions(source) {
+  return (Array.isArray(source) ? source : [])
+    .map((session) => cloneStoredSession(session))
+    .filter(Boolean)
+    .sort((left, right) => (
+      left.startedAt - right.startedAt
+      || left.endedAt - right.endedAt
+      || left.key.localeCompare(right.key, 'en')
+    ));
+}
+
+function createTimelineSessionFromEntry(entry, startedAt, endedAt, { isLive = false } = {}) {
+  return cloneStoredSession({
+    ...entry,
+    pageHost: sanitizeText(entry?.pageHost),
+    startedAt,
+    endedAt,
+    isLive
+  });
+}
+
+function appendTimelineSession(sessions, session) {
+  if (!Array.isArray(sessions) || !session) {
+    return;
+  }
+
+  const lastSession = sessions[sessions.length - 1];
+  if (
+    lastSession
+    && buildTimelineSessionSignature(lastSession) === buildTimelineSessionSignature(session)
+    && Number(lastSession.endedAt) === Number(session.startedAt)
+  ) {
+    lastSession.endedAt = session.endedAt;
+    lastSession.durationMs = Math.max((Number(lastSession.endedAt) || 0) - (Number(lastSession.startedAt) || 0), 0);
+    lastSession.subtitle = session.subtitle || lastSession.subtitle;
+    lastSession.pageTitle = session.pageTitle || lastSession.pageTitle;
+    lastSession.windowTitle = session.windowTitle || lastSession.windowTitle;
+    lastSession.url = session.url || lastSession.url;
+    lastSession.host = session.host || lastSession.host;
+    lastSession.pageHost = session.pageHost || lastSession.pageHost;
+    lastSession.path = session.path || lastSession.path;
+    lastSession.mediaTitle = session.mediaTitle || lastSession.mediaTitle;
+    lastSession.mediaArtist = session.mediaArtist || lastSession.mediaArtist;
+    lastSession.mediaAlbumTitle = session.mediaAlbumTitle || lastSession.mediaAlbumTitle;
+    lastSession.playbackStatus = session.playbackStatus || lastSession.playbackStatus;
+    lastSession.playbackType = session.playbackType || lastSession.playbackType;
+    lastSession.processName = session.processName || lastSession.processName;
+    lastSession.audioSessionState = session.audioSessionState || lastSession.audioSessionState;
+    lastSession.audioPeakValue = Math.max(Number(lastSession.audioPeakValue) || 0, Number(session.audioPeakValue) || 0);
+    lastSession.audioIsMuted = typeof session.audioIsMuted === 'boolean' ? session.audioIsMuted : lastSession.audioIsMuted;
+    lastSession.audioEndpointId = session.audioEndpointId || lastSession.audioEndpointId;
+    lastSession.audioSessionIdentifier = session.audioSessionIdentifier || lastSession.audioSessionIdentifier;
+    lastSession.audioSessionInstanceIdentifier = session.audioSessionInstanceIdentifier || lastSession.audioSessionInstanceIdentifier;
+    if (lastSession.isLive || session.isLive) {
+      lastSession.isLive = true;
+    } else {
+      delete lastSession.isLive;
+    }
+    return;
+  }
+
+  sessions.push(session);
 }
 
 function mergeStoredPageBucket(target, source) {
@@ -1221,6 +1383,34 @@ function buildSiteEntry(item, inferredHost = '') {
     lastSeenAt: Number(item.lastSeenAt) || 0,
     pages: cloneStoredPageBuckets(item.pages)
   };
+}
+
+function canonicalizeTimelineSession(session, ruleConfig = DEFAULT_RULE_CONFIG) {
+  if (!session) {
+    return null;
+  }
+
+  let candidate = session;
+  if (isBrowserUsageItem(session) && hasWebsiteMetadata(session)) {
+    const siteSession = buildSiteEntry(session, sanitizeText(session.pageHost || session.host));
+    if (siteSession) {
+      candidate = {
+        ...session,
+        ...siteSession,
+        pageHost: sanitizeText(session.pageHost || session.host)
+      };
+    }
+  }
+
+  const canonicalSession = canonicalizeEntry(candidate, ruleConfig);
+  return cloneStoredSession({
+    ...session,
+    ...canonicalSession,
+    pageHost: sanitizeText(session.pageHost || candidate.pageHost || candidate.host),
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    isLive: session.isLive
+  });
 }
 
 function mergeStoredItems(target, source) {
@@ -1897,7 +2087,9 @@ function inferSiteHostFromTitle(item, siteCandidates) {
 
 function migrateDay(day, ruleConfig = DEFAULT_RULE_CONFIG) {
   const sourceItems = Object.values(day?.items || {}).map((item) => cloneStoredItem(item));
+  const sourceSessions = cloneStoredSessions(day?.sessions);
   const nextItems = {};
+  const nextSessions = [];
   let changed = false;
 
   for (const item of sourceItems) {
@@ -1929,6 +2121,16 @@ function migrateDay(day, ruleConfig = DEFAULT_RULE_CONFIG) {
     ) {
       changed = true;
     }
+  }
+
+  for (const session of sourceSessions) {
+    const canonicalSession = canonicalizeTimelineSession(session, ruleConfig);
+    if (!canonicalSession) {
+      changed = true;
+      continue;
+    }
+
+    appendTimelineSession(nextSessions, canonicalSession);
   }
 
   const siteCandidates = Object.values(nextItems).filter((item) => Boolean(item.host));
@@ -1966,9 +2168,14 @@ function migrateDay(day, ruleConfig = DEFAULT_RULE_CONFIG) {
     changed = true;
   }
 
+  if (JSON.stringify(sourceSessions) !== JSON.stringify(nextSessions)) {
+    changed = true;
+  }
+
   return {
     totalMs,
     items: nextItems,
+    sessions: nextSessions,
     changed
   };
 }
@@ -1982,7 +2189,8 @@ function migrateUsageData(rawData, { ruleConfig = DEFAULT_RULE_CONFIG } = {}) {
     const migratedDay = migrateDay(day, ruleConfig);
     result.days[dayKey] = {
       totalMs: migratedDay.totalMs,
-      items: migratedDay.items
+      items: migratedDay.items,
+      sessions: migratedDay.sessions
     };
     changed ||= migratedDay.changed;
   }
@@ -2837,16 +3045,10 @@ class UsageTracker {
   }
 
   allocateDuration(entry, startTimestamp, endTimestamp) {
-    let cursor = startTimestamp;
-    while (cursor < endTimestamp) {
-      const currentDate = new Date(cursor);
-      const dayBoundary = new Date(currentDate);
-      dayBoundary.setHours(24, 0, 0, 0);
-      const sliceEnd = Math.min(endTimestamp, dayBoundary.getTime());
-      const durationMs = sliceEnd - cursor;
-      this.applyDuration(entry, currentDate, durationMs);
-      cursor = sliceEnd;
-    }
+    forEachDaySlice(startTimestamp, endTimestamp, ({ date, startTimestamp: sliceStart, endTimestamp: sliceEnd, durationMs }) => {
+      this.applyDuration(entry, date, durationMs);
+      this.appendSessionSlice(entry, sliceStart, sliceEnd);
+    });
   }
 
   applyDuration(entry, date, durationMs) {
@@ -2876,9 +3078,41 @@ class UsageTracker {
     this.applyPageDuration(item, entry, date, durationMs);
   }
 
+  appendSessionSlice(entry, startTimestamp, endTimestamp, { isLive = false, targetSessions = null } = {}) {
+    if (!entry || !startTimestamp || !endTimestamp || endTimestamp <= startTimestamp) {
+      return;
+    }
+
+    const sessions = targetSessions || this.ensureDay(getDayKey(new Date(startTimestamp))).sessions;
+    if (!Array.isArray(sessions)) {
+      return;
+    }
+
+    const session = createTimelineSessionFromEntry(entry, startTimestamp, endTimestamp, { isLive });
+    appendTimelineSession(sessions, session);
+  }
+
+  appendProjectedSessionSlices(targetDayKey, sessions, entry, startTimestamp, endTimestamp) {
+    if (!entry || !Array.isArray(sessions) || !startTimestamp || !endTimestamp || endTimestamp <= startTimestamp) {
+      return;
+    }
+
+    forEachDaySlice(startTimestamp, endTimestamp, ({ startTimestamp: sliceStart, endTimestamp: sliceEnd }) => {
+      const sliceDayKey = getDayKey(new Date(sliceStart));
+      if (sliceDayKey !== targetDayKey) {
+        return;
+      }
+
+      this.appendSessionSlice(entry, sliceStart, sliceEnd, {
+        isLive: true,
+        targetSessions: sessions
+      });
+    });
+  }
+
   ensureDay(dayKey) {
     if (!this.data.days[dayKey]) {
-      this.data.days[dayKey] = { totalMs: 0, items: {} };
+      this.data.days[dayKey] = createEmptyDay();
       this.sortedDayKeysDirty = true;
     }
 
@@ -3024,7 +3258,7 @@ class UsageTracker {
       return this.serializedDayCache.get(dayKey);
     }
 
-    const day = this.data.days[dayKey] || { totalMs: 0, items: {} };
+    const day = this.data.days[dayKey] || createEmptyDay();
     const serialized = {
       totalMs: day.totalMs,
       hourly: this.mergeDayHourly(day),
@@ -3130,6 +3364,41 @@ class UsageTracker {
     }
 
     return hourly;
+  }
+
+  getTimeline(dayKey, now = Date.now()) {
+    const availableDays = this.getSortedDayKeys();
+    const fallbackDayKey = availableDays[availableDays.length - 1] || getDayKey(new Date(now));
+    const resolvedDayKey = sanitizeText(dayKey, fallbackDayKey);
+    const day = this.data.days[resolvedDayKey] || createEmptyDay();
+    const sessions = cloneStoredSessions(day.sessions);
+
+    if (resolvedDayKey === getDayKey(new Date(now))) {
+      if (!this.isForegroundTrackingPaused() && this.currentEntry) {
+        const liveStart = Number(this.currentEntry.lastSeenAt) || Number(this.currentEntry.startedAt) || 0;
+        this.appendProjectedSessionSlices(resolvedDayKey, sessions, this.currentEntry, liveStart, now);
+      }
+
+      if (!this.isPlaybackTrackingPaused()) {
+        for (const entry of this.currentPlaybackEntries.values()) {
+          const liveStart = Number(entry.lastSeenAt) || Number(entry.startedAt) || 0;
+          this.appendProjectedSessionSlices(resolvedDayKey, sessions, entry, liveStart, now);
+        }
+      }
+    }
+
+    const totalMs = sessions.reduce((sum, session) => sum + (Number(session.durationMs) || 0), 0);
+    const storedSessionCount = cloneStoredSessions(day.sessions).length;
+
+    return {
+      dayKey: resolvedDayKey,
+      totalMs,
+      sessionCount: sessions.length,
+      availableDays,
+      hasStoredSessions: storedSessionCount > 0,
+      hasAggregatedData: (Number(day.totalMs) || 0) > 0,
+      sessions
+    };
   }
 
   getItemDetail(itemKey) {

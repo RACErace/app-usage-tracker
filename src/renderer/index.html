@@ -19,6 +19,7 @@
         <div class="tab-row" id="range-tabs">
           <button class="range-tab active" type="button" data-range="daily">每天</button>
           <button class="range-tab" type="button" data-range="weekly">近 7 天</button>
+          <button class="range-tab" type="button" id="timeline-button">时间线</button>
           <button class="range-tab tab-settings-button" type="button" id="settings-button">设置</button>
         </div>
 
@@ -82,15 +83,30 @@
             </section>
 
           </div>
+        </section>
 
-          <section class="section-block timeline-section">
-            <div class="section-title-row">
-              <h2 class="section-title" id="timeline-section-title">时间线</h2>
-              <span class="section-meta" id="timeline-summary">按小时聚合</span>
+        <section class="screen" id="timeline-screen">
+          <section class="date-strip">
+            <button class="pill-button" type="button" id="timeline-previous-day">‹</button>
+            <div class="date-label" id="timeline-date-label">今天</div>
+            <button class="pill-button" type="button" id="timeline-next-day">›</button>
+          </section>
+
+          <section class="section-block">
+            <div class="section-title-row timeline-header-row">
+              <div>
+                <h2 class="section-title">真实时间线</h2>
+                <p class="timeline-page-description">按真实会话片段展示当前日期的应用、网页和播放记录。</p>
+              </div>
+              <span class="section-meta" id="timeline-day-summary">读取中</span>
             </div>
 
-            <article class="card timeline-card">
-              <div class="timeline-list" id="timeline-list"></div>
+            <article class="card timeline-page-card">
+              <div class="setting-status-line timeline-status-line">
+                <span class="status-dot" id="timeline-live-dot"></span>
+                <span class="status-text" id="timeline-live-status">读取中</span>
+              </div>
+              <div class="timeline-board" id="timeline-board"></div>
             </article>
           </section>
         </section>

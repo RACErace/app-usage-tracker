@@ -1015,6 +1015,10 @@ ipcMain.handle('usage:get-detail', async (_event, itemKey) => {
   return usageTracker ? usageTracker.getItemDetail(itemKey) : null;
 });
 
+ipcMain.handle('usage:get-timeline', async (_event, dayKey) => {
+  return usageTracker ? usageTracker.getTimeline(dayKey) : null;
+});
+
 ipcMain.handle('usage:force-poll', async () => {
   if (!usageTracker) {
     return null;

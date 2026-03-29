@@ -17,10 +17,11 @@ const {
 
 function createPersistedUsageData(label = 'Notepad') {
   return {
-    version: 4,
+    version: 5,
     days: {
       '2026-03-25': {
         totalMs: 120000,
+        sessions: [],
         items: {
           'app:notepad': {
             key: 'app:notepad',
@@ -276,6 +277,147 @@ test('migration reapplies custom service and category rules to historical data',
   assert.equal(items[0].totalMs, 120000);
   assert.equal(items[0].categoryId, 'communication');
   assert.equal(items[0].categoryLabel, '沟通');
+});
+
+test('migration reapplies service rules to stored timeline sessions', () => {
+  const ruleConfig = __testables.createRuleConfig({
+    customServiceRules: [{
+      id: 'slack-rule',
+      serviceName: 'Slack',
+      appMatchers: ['Slack'],
+      domains: ['slack.com']
+    }],
+    categoryRules: []
+  });
+
+  const migrated = migrateUsageData({
+    version: 4,
+    days: {
+      '2026-03-26': {
+        totalMs: 60000,
+        items: {},
+        sessions: [{
+          key: 'site:slack',
+          kind: 'site',
+          label: 'slack',
+          subtitle: 'Workspace',
+          appName: 'Chrome',
+          browserFamily: 'Chrome',
+          pageTitle: 'Slack Web',
+          windowTitle: 'Slack Web',
+          url: 'https://app.slack.com/client',
+          host: 'slack.com',
+          pageHost: 'app.slack.com',
+          path: '/client',
+          executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          trackingMode: 'foreground',
+          trackingSource: 'foreground',
+          color: '#1c8cff',
+          startedAt: new Date(2026, 2, 26, 9, 0, 0, 0).getTime(),
+          endedAt: new Date(2026, 2, 26, 9, 1, 0, 0).getTime()
+        }]
+      }
+    }
+  }, { ruleConfig });
+
+  const [session] = migrated.data.days['2026-03-26'].sessions;
+  assert.equal(session.key, 'service:custom:slack-rule');
+  assert.equal(session.label, 'Slack');
+  assert.equal(session.host, 'slack.com');
+});
+
+test('timeline merges contiguous slices and splits when page metadata changes', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-timeline-merge'),
+    onDataChanged: null
+  });
+
+  const startedAt = new Date(2026, 2, 28, 14, 0, 0, 0).getTime();
+  const baseEntry = {
+    key: 'site:openai',
+    kind: 'site',
+    label: 'openai',
+    subtitle: 'OpenAI Docs',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: 'OpenAI Docs',
+    windowTitle: 'OpenAI Docs',
+    url: 'https://platform.openai.com/docs',
+    host: 'openai.com',
+    pageHost: 'platform.openai.com',
+    path: '/docs',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#1c8cff',
+    startedAt,
+    lastSeenAt: startedAt
+  };
+
+  tracker.allocateDuration(baseEntry, startedAt, startedAt + 60000);
+  tracker.allocateDuration({ ...baseEntry }, startedAt + 60000, startedAt + 120000);
+  tracker.allocateDuration({
+    ...baseEntry,
+    subtitle: 'API Pricing',
+    pageTitle: 'API Pricing',
+    windowTitle: 'API Pricing',
+    url: 'https://platform.openai.com/pricing',
+    path: '/pricing'
+  }, startedAt + 120000, startedAt + 180000);
+
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 180000);
+  assert.equal(timeline.sessions.length, 2);
+  assert.equal(timeline.sessions[0].durationMs, 120000);
+  assert.equal(timeline.sessions[0].pageTitle, 'OpenAI Docs');
+  assert.equal(timeline.sessions[1].durationMs, 60000);
+  assert.equal(timeline.sessions[1].pageTitle, 'API Pricing');
+});
+
+test('timeline projects live sessions for the current day without waiting for a save', () => {
+  const originalNow = Date.now;
+  const startedAt = new Date(2026, 2, 29, 10, 0, 0, 0).getTime();
+
+  try {
+    Date.now = () => startedAt + 45000;
+    const tracker = new UsageTracker({
+      userDataPath: path.join(__dirname, '.tmp-tracker-timeline-live'),
+      onDataChanged: null
+    });
+
+    const entry = tracker.normalizeWindow({
+      title: 'VS Code',
+      owner: {
+        name: 'Code',
+        path: 'C:\\Users\\race2\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+      }
+    }, startedAt);
+
+    tracker.currentEntry = entry;
+    tracker.currentEntry.lastSeenAt = startedAt;
+
+    const timeline = tracker.getTimeline('2026-03-29', startedAt + 45000);
+    assert.equal(timeline.sessions.length, 1);
+    assert.equal(timeline.sessions[0].isLive, true);
+    assert.equal(timeline.sessions[0].durationMs, 45000);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test('music app profiles match desktop app names and SMTC source ids', () => {
