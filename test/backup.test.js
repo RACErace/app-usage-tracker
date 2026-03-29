@@ -32,7 +32,7 @@ test('buildBackupPayload wraps usage data and settings into a versioned backup f
     closeWindowAction: 'tray'
   });
   assert.deepEqual(payload.usageData, {
-    version: 4,
+    version: 5,
     days: {}
   });
 });
@@ -82,7 +82,7 @@ test('parseBackupPayload accepts wrapped backup files and migrates usage data', 
   assert.equal(parsed.meta.backupVersion, 1);
   assert.equal(parsed.meta.exportedAt, '2026-03-20T12:00:00.000Z');
   assert.equal(parsed.meta.appVersion, '1.2.0');
-  assert.equal(parsed.usageData.version, 4);
+  assert.equal(parsed.usageData.version, 5);
   assert.equal(item.host, 'foo.github.io');
   assert.equal(item.label, 'foo');
   assert.deepEqual(parsed.settings, {
@@ -124,7 +124,7 @@ test('parseBackupPayload accepts raw usage-data files without settings', () => {
 
   assert.equal(parsed.meta.source, 'usage-data');
   assert.equal(parsed.settings, null);
-  assert.equal(parsed.usageData.version, 4);
+  assert.equal(parsed.usageData.version, 5);
   assert.equal(parsed.usageData.days['2026-03-25'].totalMs, 120000);
   assert.equal(parsed.usageData.days['2026-03-25'].items['app:notepad'].label, 'Notepad');
 });

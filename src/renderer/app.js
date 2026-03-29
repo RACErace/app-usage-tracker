@@ -5,6 +5,8 @@ const DEFAULT_BACKUP_STATUS = Object.freeze({
 const THEME_PREFERENCE_LIGHT = 'light';
 const THEME_PREFERENCE_DARK = 'dark';
 const THEME_PREFERENCE_SYSTEM = 'system';
+const TIMELINE_HOUR_HEIGHT = 76;
+const TIMELINE_MIN_SESSION_HEIGHT = 44;
 const DEFAULT_CATEGORY_OPTIONS = Object.freeze([
   { id: 'work', label: '工作' },
   { id: 'entertainment', label: '娱乐' },
@@ -18,9 +20,14 @@ const systemThemeMediaQuery = typeof window.matchMedia === 'function'
 const state = {
   snapshot: null,
   settings: null,
+  timeline: null,
+  timelineLoading: false,
+  timelineRequestId: 0,
+  timelineRequestedDayKey: null,
   selectedRange: 'daily',
   selectedDayKey: null,
   detailItemKey: null,
+  detailReturnScreen: 'overview',
   detail: null,
   activeScreen: 'overview',
   iconCache: new Map(),
@@ -45,13 +52,18 @@ const elements = {
   tabRow: document.getElementById('range-tabs'),
   screenTitle: document.getElementById('screen-title'),
   overviewScreen: document.getElementById('overview-screen'),
+  timelineScreen: document.getElementById('timeline-screen'),
   detailScreen: document.getElementById('detail-screen'),
   settingsScreen: document.getElementById('settings-screen'),
+  timelineButton: document.getElementById('timeline-button'),
   settingsButton: document.getElementById('settings-button'),
   rangeTabs: [...document.querySelectorAll('.range-tab')],
   previousDay: document.getElementById('previous-day'),
   nextDay: document.getElementById('next-day'),
   dateLabel: document.getElementById('date-label'),
+  timelinePreviousDay: document.getElementById('timeline-previous-day'),
+  timelineNextDay: document.getElementById('timeline-next-day'),
+  timelineDateLabel: document.getElementById('timeline-date-label'),
   trackingPauseWarning: document.getElementById('tracking-pause-warning'),
   trackingPauseWarningTitle: document.getElementById('tracking-pause-warning-title'),
   trackingPauseWarningText: document.getElementById('tracking-pause-warning-text'),
@@ -65,9 +77,10 @@ const elements = {
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
   rankingSummary: document.getElementById('ranking-summary'),
-  timelineSectionTitle: document.getElementById('timeline-section-title'),
-  timelineSummary: document.getElementById('timeline-summary'),
-  timelineList: document.getElementById('timeline-list'),
+  timelineDaySummary: document.getElementById('timeline-day-summary'),
+  timelineLiveDot: document.getElementById('timeline-live-dot'),
+  timelineLiveStatus: document.getElementById('timeline-live-status'),
+  timelineBoard: document.getElementById('timeline-board'),
   settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
   browserExtensionStatusDot: document.getElementById('browser-extension-status-dot'),
   browserExtensionStatusText: document.getElementById('browser-extension-status-text'),
@@ -806,189 +819,358 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
   }
 }
 
-function formatTimelineHour(hour) {
-  return `${padNumber(hour)}:00`;
+function formatClockTime(value) {
+  const date = new Date(value);
+  return `${padNumber(date.getHours())}:${padNumber(date.getMinutes())}`;
 }
 
-function formatTimelineHourRange(hour) {
-  return `${formatTimelineHour(hour)} - ${formatTimelineHour((hour + 1) % 24)}`;
+function formatTimelineSessionRange(session) {
+  return `${formatClockTime(session.startedAt)} - ${formatClockTime(session.endedAt)}`;
 }
 
-function buildDailyTimelineEntries(day) {
-  return Array.from({ length: 24 }, (_unused, hour) => {
-    const items = (day?.items || [])
-      .map((item) => ({
-        ...item,
-        slotMs: Number(item.hourly?.[hour]) || 0
-      }))
-      .filter((item) => item.slotMs > 0)
-      .sort((left, right) => right.slotMs - left.slotMs);
+function getTimelineSessionTitle(session) {
+  if (session.trackingMode === 'playback') {
+    return session.mediaTitle || session.label || session.appName || '音乐播放';
+  }
 
-    const totalMs = Number(day?.hourly?.[hour]) || 0;
-    return {
-      key: `hour-${hour}`,
-      anchorLabel: formatTimelineHour(hour),
-      title: formatTimelineHourRange(hour),
-      meta: totalMs ? `${items.length} 项活跃` : '暂无活动',
-      totalMs,
-      itemCount: items.length,
-      items
-    };
-  }).filter((entry) => entry.totalMs > 0);
+  if (session.pageTitle) {
+    return session.pageTitle;
+  }
+
+  return session.label || session.appName || session.host || '未知会话';
 }
 
-function buildWeeklyTimelineEntries(weekly) {
-  const totalsByDay = new Map((weekly?.dailyTotals || []).map((item) => [item.dayKey, Number(item.totalMs) || 0]));
+function getTimelineSessionSecondary(session) {
+  const parts = [];
 
-  return (weekly?.dayKeys || []).map((dayKey) => {
-    const items = (weekly?.items || [])
-      .map((item) => ({
-        ...item,
-        slotMs: Number(item.byDay?.[dayKey]) || 0
-      }))
-      .filter((item) => item.slotMs > 0)
-      .sort((left, right) => right.slotMs - left.slotMs);
+  if (session.trackingMode === 'playback') {
+    if (session.mediaArtist) {
+      parts.push(session.mediaArtist);
+    }
+    if (session.label && session.mediaTitle && session.label !== session.mediaTitle) {
+      parts.push(session.label);
+    }
+    return parts.filter(Boolean).join(' · ');
+  }
 
-    const totalMs = totalsByDay.get(dayKey) || 0;
-    return {
-      key: `day-${dayKey}`,
-      anchorLabel: `周${weekdayLabel(dayKey)}`,
-      title: formatDayLabel(dayKey),
-      meta: totalMs ? `${items.length} 项出现` : '暂无活动',
-      totalMs,
-      itemCount: items.length,
-      items
-    };
-  });
+  if (session.url || session.kind === 'site') {
+    parts.push(session.host || session.pageHost || session.label || '');
+    if (session.appName && session.appName !== session.label) {
+      parts.push(session.appName);
+    }
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  const windowTitle = session.windowTitle || session.subtitle || '';
+  if (windowTitle && windowTitle !== session.label) {
+    parts.push(windowTitle);
+  }
+  if (session.processName && session.processName !== session.appName) {
+    parts.push(session.processName);
+  }
+
+  return parts.filter(Boolean).join(' · ');
 }
 
-function renderOverviewTimeline(activeDay, weekly) {
-  if (!elements.timelineSectionTitle || !elements.timelineSummary || !elements.timelineList) {
+function getTimelineSessionKindLabel(session) {
+  if (session.trackingMode === 'playback') {
+    return formatTrackingSourceLabel(session.trackingSource);
+  }
+
+  if (session.url || session.kind === 'site') {
+    return '网页会话';
+  }
+
+  return '前台窗口';
+}
+
+function renderTimelineEmptyState(title, detail) {
+  if (!elements.timelineBoard) {
     return;
   }
 
-  const isDaily = state.selectedRange === 'daily';
-  const entries = isDaily ? buildDailyTimelineEntries(activeDay) : buildWeeklyTimelineEntries(weekly);
-  const activeEntries = entries.filter((entry) => entry.totalMs > 0);
-  const maxTotalMs = Math.max(...activeEntries.map((entry) => entry.totalMs), 0);
+  const empty = document.createElement('div');
+  empty.className = 'timeline-empty-state';
 
-  elements.timelineSectionTitle.textContent = isDaily ? '时间线' : '近 7 天时间线';
-  elements.timelineSummary.textContent = isDaily
-    ? `按小时聚合 · ${activeEntries.length} 个活跃时段`
-    : (entries.length
-      ? `按天聚合 · ${activeEntries.length} / ${entries.length} 天有活动`
-      : '按天聚合 · 暂无可用日期');
-  elements.timelineList.replaceChildren();
+  const titleNode = document.createElement('strong');
+  titleNode.className = 'timeline-empty-title';
+  titleNode.textContent = title;
 
-  if (!activeEntries.length) {
-    const empty = document.createElement('div');
-    empty.className = 'timeline-empty';
-    empty.textContent = isDaily
-      ? '当前日期还没有采集到可展示的活动时间段。'
-      : '近 7 天还没有采集到可展示的活动时间段。';
-    elements.timelineList.appendChild(empty);
-    return;
+  empty.appendChild(titleNode);
+
+  if (detail) {
+    const detailNode = document.createElement('p');
+    detailNode.className = 'timeline-empty-detail';
+    detailNode.textContent = detail;
+    empty.appendChild(detailNode);
   }
 
-  entries.forEach((entry, index) => {
-    const row = document.createElement('article');
-    row.className = 'timeline-entry';
-    if (entry.totalMs <= 0) {
-      row.classList.add('empty');
-    }
+  elements.timelineBoard.appendChild(empty);
+}
 
-    const axis = document.createElement('div');
-    axis.className = 'timeline-axis';
-
-    const axisLabel = document.createElement('span');
-    axisLabel.className = 'timeline-axis-label';
-    axisLabel.textContent = entry.anchorLabel;
-
-    const axisDot = document.createElement('span');
-    axisDot.className = 'timeline-axis-dot';
-
-    const axisLine = document.createElement('span');
-    axisLine.className = 'timeline-axis-line';
-    axisLine.hidden = index === entries.length - 1;
-
-    axis.append(axisLabel, axisDot, axisLine);
-
-    const body = document.createElement('div');
-    body.className = 'timeline-body';
-
-    const head = document.createElement('div');
-    head.className = 'timeline-entry-head';
-
-    const title = document.createElement('strong');
-    title.className = 'timeline-entry-title';
-    title.textContent = entry.title;
-
-    const duration = document.createElement('span');
-    duration.className = 'timeline-entry-duration';
-    duration.textContent = formatDuration(entry.totalMs, 'short');
-
-    head.append(title, duration);
-
-    const meta = document.createElement('div');
-    meta.className = 'timeline-entry-meta';
-    meta.textContent = entry.meta;
-
-    const track = document.createElement('div');
-    track.className = 'timeline-track';
-
-    const bar = document.createElement('div');
-    bar.className = 'timeline-bar';
-    if (entry.totalMs > 0 && maxTotalMs > 0) {
-      bar.style.width = `${Math.max((entry.totalMs / maxTotalMs) * 100, 6)}%`;
-      bar.style.background = `linear-gradient(90deg, ${entry.items[0]?.color || '#1a8dff'}, rgba(83, 204, 255, 0.95))`;
-    } else {
-      bar.style.width = '0%';
-    }
-    track.appendChild(bar);
-
-    body.append(head, meta, track);
-
-    if (entry.items.length) {
-      const chipList = document.createElement('div');
-      chipList.className = 'timeline-chip-list';
-
-      entry.items.slice(0, 3).forEach((item) => {
-        const chip = document.createElement('button');
-        chip.className = 'timeline-chip';
-        chip.type = 'button';
-        chip.title = `${item.label} ${formatDuration(item.slotMs, 'short')}`;
-        chip.setAttribute('aria-label', `查看 ${item.label} 的详情`);
-        chip.addEventListener('click', () => openDetail(item.key));
-
-        const swatch = document.createElement('span');
-        swatch.className = 'timeline-chip-swatch';
-        swatch.style.background = item.color;
-
-        const label = document.createElement('span');
-        label.className = 'timeline-chip-label';
-        label.textContent = item.label;
-
-        const chipDuration = document.createElement('span');
-        chipDuration.className = 'timeline-chip-duration';
-        chipDuration.textContent = formatDuration(item.slotMs, 'short');
-
-        chip.append(swatch, label, chipDuration);
-        chipList.appendChild(chip);
-      });
-
-      if (entry.itemCount > 3) {
-        const more = document.createElement('span');
-        more.className = 'timeline-chip more';
-        more.textContent = `+${entry.itemCount - 3} 项`;
-        chipList.appendChild(more);
+function buildTimelineLayout(sessions) {
+  const laneEndTimes = [];
+  const positioned = [...sessions]
+    .sort((left, right) => (
+      Number(left.startedAt) - Number(right.startedAt)
+      || Number(left.endedAt) - Number(right.endedAt)
+      || (left.key || '').localeCompare(right.key || '', 'en')
+    ))
+    .map((session) => {
+      let laneIndex = laneEndTimes.findIndex((laneEndAt) => laneEndAt <= Number(session.startedAt));
+      if (laneIndex < 0) {
+        laneIndex = laneEndTimes.length;
       }
 
-      body.appendChild(chipList);
+      laneEndTimes[laneIndex] = Number(session.endedAt);
+      return {
+        ...session,
+        laneIndex
+      };
+    });
+
+  return {
+    laneCount: Math.max(laneEndTimes.length, 1),
+    sessions: positioned
+  };
+}
+
+function renderTimelineBoard(sessions, dayKey) {
+  if (!elements.timelineBoard) {
+    return;
+  }
+
+  elements.timelineBoard.replaceChildren();
+
+  const totalHeight = TIMELINE_HOUR_HEIGHT * 24;
+  const layout = buildTimelineLayout(sessions);
+  const laneWidth = 100 / layout.laneCount;
+  const dayStart = new Date(`${dayKey}T00:00:00`).getTime();
+
+  const grid = document.createElement('div');
+  grid.className = 'timeline-grid';
+
+  const axis = document.createElement('div');
+  axis.className = 'timeline-hour-axis';
+
+  for (let hour = 0; hour < 24; hour += 1) {
+    const label = document.createElement('div');
+    label.className = 'timeline-hour-label';
+    label.style.height = `${TIMELINE_HOUR_HEIGHT}px`;
+    label.textContent = `${padNumber(hour)}:00`;
+    axis.appendChild(label);
+  }
+
+  const canvasWrap = document.createElement('div');
+  canvasWrap.className = 'timeline-canvas-wrap';
+
+  const canvas = document.createElement('div');
+  canvas.className = 'timeline-canvas';
+  canvas.style.height = `${totalHeight}px`;
+
+  for (let hour = 0; hour < 24; hour += 1) {
+    const slot = document.createElement('div');
+    slot.className = 'timeline-hour-slot';
+    slot.style.top = `${hour * TIMELINE_HOUR_HEIGHT}px`;
+    slot.style.height = `${TIMELINE_HOUR_HEIGHT}px`;
+    canvas.appendChild(slot);
+  }
+
+  if (dayKey === getLocalDayKey(new Date())) {
+    const now = new Date();
+    const minutesSinceStart = now.getHours() * 60 + now.getMinutes();
+    const nowLine = document.createElement('div');
+    nowLine.className = 'timeline-now-line';
+    nowLine.style.top = `${(minutesSinceStart / 60) * TIMELINE_HOUR_HEIGHT}px`;
+
+    const nowLabel = document.createElement('span');
+    nowLabel.className = 'timeline-now-label';
+    nowLabel.textContent = `现在 ${formatClockTime(now)}`;
+
+    nowLine.appendChild(nowLabel);
+    canvas.appendChild(nowLine);
+  }
+
+  layout.sessions.forEach((session) => {
+    const startMinutes = Math.max((Number(session.startedAt) - dayStart) / 60000, 0);
+    const endMinutes = Math.min((Number(session.endedAt) - dayStart) / 60000, 24 * 60);
+    const top = (startMinutes / 60) * TIMELINE_HOUR_HEIGHT;
+    const rawHeight = ((endMinutes - startMinutes) / 60) * TIMELINE_HOUR_HEIGHT;
+    const height = Math.max(rawHeight, TIMELINE_MIN_SESSION_HEIGHT);
+
+    const card = document.createElement('button');
+    card.className = 'timeline-session-card';
+    card.type = 'button';
+    if (session.trackingMode === 'playback') {
+      card.classList.add('playback');
+    }
+    if (session.isLive) {
+      card.classList.add('live');
+    }
+    card.style.top = `${top}px`;
+    card.style.height = `${height}px`;
+    card.style.left = `calc(${session.laneIndex * laneWidth}% + 4px)`;
+    card.style.width = `calc(${laneWidth}% - 8px)`;
+    card.style.setProperty('--session-color', session.color || 'var(--accent)');
+    card.title = `${getTimelineSessionTitle(session)}\n${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
+    card.setAttribute('aria-label', `查看 ${getTimelineSessionTitle(session)} 的详情`);
+    card.addEventListener('click', () => openDetail(session.key));
+
+    const title = document.createElement('strong');
+    title.className = 'timeline-session-title';
+    title.textContent = getTimelineSessionTitle(session);
+
+    const time = document.createElement('span');
+    time.className = 'timeline-session-time';
+    time.textContent = `${formatTimelineSessionRange(session)} · ${formatDuration(session.durationMs, 'short')}`;
+
+    const meta = document.createElement('span');
+    meta.className = 'timeline-session-meta';
+    meta.textContent = [getTimelineSessionSecondary(session), getTimelineSessionKindLabel(session)]
+      .filter(Boolean)
+      .join(' · ');
+
+    card.append(title, time);
+    if (meta.textContent) {
+      card.appendChild(meta);
     }
 
-    row.append(axis, body);
-    elements.timelineList.appendChild(row);
+    if (session.isLive) {
+      const liveBadge = document.createElement('span');
+      liveBadge.className = 'timeline-session-badge';
+      liveBadge.textContent = '进行中';
+      card.appendChild(liveBadge);
+    }
+
+    canvas.appendChild(card);
   });
+
+  canvasWrap.appendChild(canvas);
+  grid.append(axis, canvasWrap);
+  elements.timelineBoard.appendChild(grid);
+}
+
+function renderTimelineScreen() {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return;
+  }
+
+  ensureSelectedDayKey();
+  const availableDays = snapshot.daily.availableDays || [];
+  const currentIndex = availableDays.indexOf(state.selectedDayKey);
+  const timeline = state.timeline?.dayKey === state.selectedDayKey ? state.timeline : null;
+  const visibleSessions = timeline
+    ? (timeline.sessions || []).filter((session) => isItemVisible(session.key))
+    : [];
+  const liveVisibleSessions = visibleSessions.filter((session) => session.isLive);
+  const totalVisibleMs = visibleSessions.reduce((sum, session) => sum + (Number(session.durationMs) || 0), 0);
+
+  elements.timelinePreviousDay.disabled = currentIndex <= 0;
+  elements.timelineNextDay.disabled = currentIndex < 0 || currentIndex >= availableDays.length - 1;
+  elements.timelineDateLabel.textContent = formatDayLabel(state.selectedDayKey);
+  elements.timelineBoard.replaceChildren();
+
+  if (elements.timelineDaySummary) {
+    elements.timelineDaySummary.textContent = state.timelineLoading && !timeline
+      ? '正在读取...'
+      : (visibleSessions.length
+        ? `共 ${visibleSessions.length} 段会话 · ${formatDuration(totalVisibleMs)}`
+        : (timeline?.hasAggregatedData ? `已累计 ${formatDuration(timeline.totalMs)}` : '暂无会话'));
+  }
+
+  if (elements.timelineLiveDot) {
+    elements.timelineLiveDot.classList.remove('active', 'warning');
+    if (liveVisibleSessions.length) {
+      elements.timelineLiveDot.classList.add('active');
+    } else if (timeline?.hasAggregatedData && !timeline?.hasStoredSessions) {
+      elements.timelineLiveDot.classList.add('warning');
+    }
+  }
+
+  if (elements.timelineLiveStatus) {
+    if (state.timelineLoading && !timeline) {
+      elements.timelineLiveStatus.textContent = '正在读取所选日期的真实时间线...';
+    } else if (liveVisibleSessions.length) {
+      elements.timelineLiveStatus.textContent = `当前有 ${liveVisibleSessions.length} 段会话仍在进行中。`;
+    } else if (timeline?.hasAggregatedData && !timeline?.hasStoredSessions) {
+      elements.timelineLiveStatus.textContent = '这一天只有旧版聚合统计；真实时间线会从升级后新采集的数据开始积累。';
+    } else if (timeline?.sessions?.length && !visibleSessions.length) {
+      elements.timelineLiveStatus.textContent = '当前日期的会话都被隐藏了，可在设置 > 显示统计项中重新勾选。';
+    } else {
+      elements.timelineLiveStatus.textContent = '时间线按真实开始和结束时间排列，并保留前台窗口与播放会话的重叠关系。';
+    }
+  }
+
+  if (state.timelineLoading && !timeline) {
+    renderTimelineEmptyState('正在加载真实时间线', '会话明细会按实际开始和结束时间显示在这里。');
+  } else if (visibleSessions.length) {
+    renderTimelineBoard(visibleSessions, timeline.dayKey);
+  } else if (timeline?.sessions?.length) {
+    renderTimelineEmptyState('当前没有可见会话', '这一天的会话都被你隐藏了，重新勾选后就会显示。');
+  } else if (timeline?.hasAggregatedData) {
+    renderTimelineEmptyState('这一天还没有真实会话明细', '旧版本累计的总时长还保留着，但逐段时间线会从本次升级后继续积累。');
+  } else {
+    renderTimelineEmptyState('当前日期还没有采集到会话', '开始使用设备后，前台窗口、网页和播放记录会按真实时间顺序出现在这里。');
+  }
+
+  showScreen('timeline');
+
+  if (!timeline && (!state.timelineLoading || state.timelineRequestedDayKey !== state.selectedDayKey)) {
+    loadTimelineDay(state.selectedDayKey).catch(() => {});
+  }
+}
+
+async function loadTimelineDay(dayKey, { force = false } = {}) {
+  if (!dayKey) {
+    return;
+  }
+
+  if (!force && state.timeline?.dayKey === dayKey && !state.timelineLoading) {
+    return;
+  }
+
+  if (!force && state.timelineLoading && state.timelineRequestedDayKey === dayKey) {
+    return;
+  }
+
+  const requestId = state.timelineRequestId + 1;
+  state.timelineRequestId = requestId;
+  state.timelineRequestedDayKey = dayKey;
+  state.timelineLoading = true;
+
+  if (state.activeScreen === 'timeline') {
+    renderTimelineScreen();
+  }
+
+  try {
+    const timeline = await window.usageApi.getTimeline(dayKey);
+    if (state.timelineRequestId !== requestId) {
+      return;
+    }
+
+    state.timeline = timeline || {
+      dayKey,
+      totalMs: 0,
+      sessionCount: 0,
+      availableDays: state.snapshot?.daily?.availableDays || [],
+      hasStoredSessions: false,
+      hasAggregatedData: false,
+      sessions: []
+    };
+    if (state.timeline?.dayKey) {
+      state.selectedDayKey = state.timeline.dayKey;
+    }
+  } finally {
+    if (state.timelineRequestId !== requestId) {
+      return;
+    }
+
+    state.timelineLoading = false;
+    if (state.activeScreen === 'timeline') {
+      renderTimelineScreen();
+    }
+  }
 }
 
 function renderTrackingPauseWarning(snapshot = state.snapshot) {
@@ -1241,24 +1423,33 @@ function updateHeader() {
   elements.backButton.classList.toggle('inactive', !isDetail);
   elements.screenTitle.textContent = isDetail
     ? (state.detail?.label || '详情')
-    : (state.activeScreen === 'settings' ? '设置' : '使用统计');
+    : (state.activeScreen === 'settings'
+      ? '设置'
+      : (state.activeScreen === 'timeline' ? '时间线' : '使用统计'));
 }
 
 function updateTopTabs() {
   const isSettings = state.activeScreen === 'settings';
+  const isTimeline = state.activeScreen === 'timeline';
   elements.rangeTabs.forEach((tab) => {
     if (tab.id === 'settings-button') {
       tab.classList.toggle('active', isSettings);
       return;
     }
 
-    tab.classList.toggle('active', !isSettings && tab.dataset.range === state.selectedRange);
+    if (tab.id === 'timeline-button') {
+      tab.classList.toggle('active', isTimeline);
+      return;
+    }
+
+    tab.classList.toggle('active', !isSettings && !isTimeline && tab.dataset.range === state.selectedRange);
   });
 }
 
 function showScreen(screen) {
   state.activeScreen = screen;
   elements.overviewScreen.classList.toggle('active', screen === 'overview');
+  elements.timelineScreen.classList.toggle('active', screen === 'timeline');
   elements.detailScreen.classList.toggle('active', screen === 'detail');
   elements.settingsScreen.classList.toggle('active', screen === 'settings');
   updateTopTabs();
@@ -1814,9 +2005,12 @@ function renderOverview() {
   const isDaily = state.selectedRange === 'daily';
   const rankingItems = isDaily ? activeDay.items : weekly.items;
   const totalMs = isDaily ? activeDay.totalMs : weekly.totalMs;
+  const currentIndex = snapshot.daily.availableDays.indexOf(state.selectedDayKey);
 
   elements.previousDay.style.visibility = isDaily ? 'visible' : 'hidden';
   elements.nextDay.style.visibility = isDaily ? 'visible' : 'hidden';
+  elements.previousDay.disabled = !isDaily || currentIndex <= 0;
+  elements.nextDay.disabled = !isDaily || currentIndex < 0 || currentIndex >= snapshot.daily.availableDays.length - 1;
   elements.dateLabel.textContent = isDaily ? formatDayLabel(state.selectedDayKey) : formatWeekRange(weekly.dayKeys);
   elements.chartSectionTitle.textContent = isDaily ? '使用时长（截至今天）' : '使用时长（近 7 天）';
   elements.summaryDuration.textContent = isDaily ? formatDuration(activeDay.totalMs) : formatDuration(weekly.averageMs, 'short');
@@ -1827,7 +2021,6 @@ function renderOverview() {
 
   renderTrackingPauseWarning(snapshot);
   renderRanking(rankingItems, totalMs);
-  renderOverviewTimeline(activeDay, weekly);
   renderSettingsState();
 
   if (isDaily) {
@@ -2428,6 +2621,12 @@ async function openDetail(itemKey) {
     return;
   }
 
+  if (state.activeScreen === 'timeline') {
+    state.detailReturnScreen = 'timeline';
+  } else if (state.activeScreen !== 'detail') {
+    state.detailReturnScreen = 'overview';
+  }
+
   state.detailItemKey = itemKey;
   const requestedItemKey = itemKey;
   const detail = await window.usageApi.getDetail(itemKey);
@@ -2449,12 +2648,22 @@ async function openDetail(itemKey) {
 function returnToOverview() {
   state.detailItemKey = null;
   state.detail = null;
+  if (state.detailReturnScreen === 'timeline') {
+    renderTimelineScreen();
+    return;
+  }
+
   renderOverview();
 }
 
 function renderCurrentScreen() {
   if (state.activeScreen === 'settings') {
     renderSettingsScreen();
+    return;
+  }
+
+  if (state.activeScreen === 'timeline') {
+    renderTimelineScreen();
     return;
   }
 
@@ -2538,6 +2747,28 @@ async function updateItemVisibility(itemKey, isVisible) {
   await updateHiddenItemKeys([...hiddenKeys]);
 }
 
+function shiftSelectedDay(offset) {
+  if (!state.snapshot || !offset) {
+    return;
+  }
+
+  const days = state.snapshot.daily.availableDays || [];
+  const currentIndex = days.indexOf(state.selectedDayKey);
+  const nextIndex = currentIndex + offset;
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= days.length) {
+    return;
+  }
+
+  state.selectedDayKey = days[nextIndex];
+
+  if (state.activeScreen === 'timeline') {
+    renderTimelineScreen();
+    return;
+  }
+
+  renderOverview();
+}
+
 function bindEvents() {
   const commitAutoBackupInterval = () => {
     const intervalMinutes = getAutoBackupIntervalMinutesFromParts(
@@ -2554,6 +2785,11 @@ function bindEvents() {
         return;
       }
 
+       if (tab.id === 'timeline-button') {
+        renderTimelineScreen();
+        return;
+      }
+
       state.selectedRange = tab.dataset.range;
       renderOverview();
     });
@@ -2564,12 +2800,7 @@ function bindEvents() {
       return;
     }
 
-    const days = state.snapshot.daily.availableDays;
-    const currentIndex = days.indexOf(state.selectedDayKey);
-    if (currentIndex > 0) {
-      state.selectedDayKey = days[currentIndex - 1];
-      renderOverview();
-    }
+    shiftSelectedDay(-1);
   });
 
   elements.nextDay.addEventListener('click', () => {
@@ -2577,12 +2808,15 @@ function bindEvents() {
       return;
     }
 
-    const days = state.snapshot.daily.availableDays;
-    const currentIndex = days.indexOf(state.selectedDayKey);
-    if (currentIndex >= 0 && currentIndex < days.length - 1) {
-      state.selectedDayKey = days[currentIndex + 1];
-      renderOverview();
-    }
+    shiftSelectedDay(1);
+  });
+
+  elements.timelinePreviousDay.addEventListener('click', () => {
+    shiftSelectedDay(-1);
+  });
+
+  elements.timelineNextDay.addEventListener('click', () => {
+    shiftSelectedDay(1);
   });
 
   elements.refreshButton.addEventListener('click', async () => {
@@ -2726,6 +2960,11 @@ async function bootstrap() {
 
     if (state.activeScreen === 'settings') {
       renderSettingsScreen();
+      return;
+    }
+
+    if (state.activeScreen === 'timeline') {
+      loadTimelineDay(state.selectedDayKey, { force: true }).catch(() => {});
       return;
     }
 

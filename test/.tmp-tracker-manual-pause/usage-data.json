@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "days": {
     "2026-03-28": {
       "totalMs": 240000,
@@ -63,7 +63,7 @@
           ],
           "pages": {},
           "color": "#a855f7",
-          "lastSeenAt": 1774759355183
+          "lastSeenAt": 1774760925849
         },
         "music:qqmusic": {
           "key": "music:qqmusic",
@@ -125,9 +125,85 @@
           ],
           "pages": {},
           "color": "#06b6d4",
-          "lastSeenAt": 1774759355184
+          "lastSeenAt": 1774760925849
         }
-      }
+      },
+      "sessions": [
+        {
+          "key": "app:slack:0ee713ff",
+          "kind": "app",
+          "label": "Slack",
+          "subtitle": "Slack",
+          "appName": "Slack",
+          "browserFamily": "",
+          "pageTitle": "",
+          "windowTitle": "Slack",
+          "url": "",
+          "host": "",
+          "pageHost": "",
+          "path": "",
+          "executablePath": "C:\\Users\\race2\\AppData\\Local\\slack\\slack.exe",
+          "categoryId": "",
+          "categoryLabel": "",
+          "trackingMode": "foreground",
+          "trackingSource": "foreground",
+          "sourceAppUserModelId": "",
+          "mediaTitle": "",
+          "mediaArtist": "",
+          "mediaAlbumTitle": "",
+          "playbackStatus": "",
+          "playbackType": "",
+          "processId": 0,
+          "processName": "",
+          "audioSessionState": "",
+          "audioPeakValue": 0,
+          "audioIsMuted": false,
+          "audioEndpointId": "",
+          "audioSessionIdentifier": "",
+          "audioSessionInstanceIdentifier": "",
+          "color": "#a855f7",
+          "startedAt": 1774659600000,
+          "endedAt": 1774659720000,
+          "durationMs": 120000
+        },
+        {
+          "key": "music:qqmusic",
+          "kind": "app",
+          "label": "QQ音乐",
+          "subtitle": "とた - 寄り道 (Detour)",
+          "appName": "QQ音乐",
+          "browserFamily": "",
+          "pageTitle": "",
+          "windowTitle": "とた - 寄り道 (Detour)",
+          "url": "",
+          "host": "",
+          "pageHost": "",
+          "path": "",
+          "executablePath": "",
+          "categoryId": "",
+          "categoryLabel": "",
+          "trackingMode": "playback",
+          "trackingSource": "",
+          "sourceAppUserModelId": "QQMusic.exe",
+          "mediaTitle": "寄り道 (Detour)",
+          "mediaArtist": "とた",
+          "mediaAlbumTitle": "Sebone",
+          "playbackStatus": "Playing",
+          "playbackType": "Music",
+          "processId": 0,
+          "processName": "",
+          "audioSessionState": "",
+          "audioPeakValue": 0,
+          "audioIsMuted": false,
+          "audioEndpointId": "",
+          "audioSessionIdentifier": "",
+          "audioSessionInstanceIdentifier": "",
+          "color": "#06b6d4",
+          "startedAt": 1774659600000,
+          "endedAt": 1774659720000,
+          "durationMs": 120000
+        }
+      ]
     }
   }
 }
