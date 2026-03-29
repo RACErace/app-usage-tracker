@@ -55,13 +55,7 @@ const elements = {
   trackingPauseWarning: document.getElementById('tracking-pause-warning'),
   trackingPauseWarningTitle: document.getElementById('tracking-pause-warning-title'),
   trackingPauseWarningText: document.getElementById('tracking-pause-warning-text'),
-  browserExtensionWarning: document.getElementById('browser-extension-warning'),
-  browserExtensionWarningText: document.getElementById('browser-extension-warning-text'),
-  overviewSummaryKicker: document.getElementById('overview-summary-kicker'),
-  overviewSummaryValue: document.getElementById('overview-summary-value'),
-  overviewSummaryCaption: document.getElementById('overview-summary-caption'),
-  overviewVisibleCount: document.getElementById('overview-visible-count'),
-  overviewVisibleCaption: document.getElementById('overview-visible-caption'),
+  overviewBridgeDot: document.getElementById('overview-bridge-dot'),
   overviewBridgeStatus: document.getElementById('overview-bridge-status'),
   overviewBridgeCaption: document.getElementById('overview-bridge-caption'),
   chartSectionTitle: document.getElementById('chart-section-title'),
@@ -782,12 +776,9 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
   const messages = getBrowserExtensionMessages(status);
   const isConnected = status.status === 'connected';
 
-  if (elements.browserExtensionWarning) {
-    elements.browserExtensionWarning.hidden = isConnected;
-  }
-
-  if (elements.browserExtensionWarningText) {
-    elements.browserExtensionWarningText.textContent = messages.warning;
+  if (elements.overviewBridgeDot) {
+    elements.overviewBridgeDot.classList.toggle('active', isConnected);
+    elements.overviewBridgeDot.classList.toggle('warning', !isConnected);
   }
 
   if (elements.browserExtensionStatusDot) {
@@ -801,6 +792,14 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
 
   if (elements.browserExtensionStatusDetail) {
     elements.browserExtensionStatusDetail.textContent = messages.detail;
+  }
+
+  if (elements.overviewBridgeStatus) {
+    elements.overviewBridgeStatus.textContent = messages.summary;
+  }
+
+  if (elements.overviewBridgeCaption) {
+    elements.overviewBridgeCaption.textContent = messages.detail;
   }
 }
 
@@ -1581,33 +1580,6 @@ function renderItemVisibilitySettings() {
   hydrateSettingsIcons(items).catch(() => {});
 }
 
-function renderOverviewSummary(activeDay, weekly, rankingItems) {
-  const allKnownItems = getAllKnownItems();
-  const hiddenCount = getHiddenItemKeySet().size;
-  const visibleCount = Math.max(allKnownItems.length - hiddenCount, 0);
-  const isDaily = state.selectedRange === 'daily';
-  const browserMessages = getBrowserExtensionMessages(getBrowserExtensionStatus());
-  const highlightValue = isDaily ? activeDay.totalMs : weekly.averageMs;
-  const trackingState = getTrackingState();
-  const caption = isDaily
-    ? `当前查看：${formatDayLabel(state.selectedDayKey)}`
-    : `近 7 天总时长 ${formatDuration(weekly.totalMs)}`;
-
-  elements.overviewSummaryKicker.textContent = isDaily ? '今日统计' : '近 7 天日均';
-  elements.overviewSummaryValue.textContent = formatDuration(highlightValue);
-  elements.overviewSummaryCaption.textContent = trackingState.playbackPaused
-    ? `${caption} · 统计已暂停`
-    : (trackingState.foregroundPaused
-      ? `${caption} · 前台统计已暂停`
-      : caption);
-  elements.overviewVisibleCount.textContent = `${visibleCount} 项`;
-  elements.overviewVisibleCaption.textContent = allKnownItems.length
-    ? `当前排行展示 ${Math.min(rankingItems.length, visibleCount)} 项，已隐藏 ${hiddenCount} 项`
-    : '采集到统计数据后会自动生成可配置项目';
-  elements.overviewBridgeStatus.textContent = browserMessages.summary;
-  elements.overviewBridgeCaption.textContent = browserMessages.detail;
-}
-
 function renderRanking(items, totalMs) {
   elements.rankingList.replaceChildren();
   if (!items.length) {
@@ -1665,7 +1637,6 @@ function renderOverview() {
     ? `共 ${rankingItems.length} 项`
     : '等待采集数据';
 
-  renderOverviewSummary(activeDay, weekly, rankingItems);
   renderTrackingPauseWarning(snapshot);
   renderRanking(rankingItems, totalMs);
   renderSettingsState();
