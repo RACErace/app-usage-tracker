@@ -327,42 +327,39 @@ button {
   font-weight: 700;
 }
 
-.overview-summary-grid {
-  display: grid;
-  gap: 16px;
-  margin-top: 18px;
-}
-
-.summary-tile {
-  display: grid;
+.overview-bridge-hint {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
-  min-height: 140px;
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-1);
 }
 
-.summary-tile-primary {
-  background:
-    linear-gradient(135deg, rgba(var(--accent-rgb), 0.2), transparent 62%),
-    var(--card-gradient);
+.overview-bridge-hint .status-dot {
+  margin-top: 4px;
+  flex: 0 0 auto;
 }
 
-.summary-kicker {
-  color: var(--muted);
+.overview-bridge-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.overview-bridge-status {
+  color: var(--text);
   font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
-.summary-value {
-  font-size: clamp(26px, 3vw, 34px);
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-}
-
-.summary-caption {
-  color: var(--text-soft);
-  font-size: 14px;
-  line-height: 1.55;
+.overview-bridge-caption {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .overview-grid,
@@ -1214,10 +1211,6 @@ canvas {
 }
 
 @media (min-width: 900px) {
-  .overview-summary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .overview-grid {
     margin-top: 28px;
     grid-template-columns: minmax(0, 1.45fr) minmax(360px, 1fr);
@@ -1270,10 +1263,6 @@ canvas {
 @media (max-width: 640px) {
   .app-shell {
     padding-inline: 14px;
-  }
-
-  .overview-summary-grid {
-    gap: 14px;
   }
 
   .card,

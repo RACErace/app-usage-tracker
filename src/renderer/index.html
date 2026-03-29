@@ -35,30 +35,13 @@
             <p class="warning-banner-text" id="tracking-pause-warning-text"></p>
           </article>
 
-          <article class="card overview-warning-card" id="browser-extension-warning" hidden>
-            <div class="warning-banner-title">浏览器插件未连接</div>
-            <p class="warning-banner-text" id="browser-extension-warning-text"></p>
-          </article>
-
-          <section class="overview-summary-grid">
-            <article class="card compact-card summary-tile summary-tile-primary">
-              <span class="summary-kicker" id="overview-summary-kicker">今日统计</span>
-              <strong class="summary-value" id="overview-summary-value">0 分钟</strong>
-              <span class="summary-caption" id="overview-summary-caption">等待采集使用数据</span>
-            </article>
-
-            <article class="card compact-card summary-tile">
-              <span class="summary-kicker">显示项目</span>
-              <strong class="summary-value" id="overview-visible-count">0 项</strong>
-              <span class="summary-caption" id="overview-visible-caption">暂无可用项目</span>
-            </article>
-
-            <article class="card compact-card summary-tile">
-              <span class="summary-kicker">浏览器识别</span>
-              <strong class="summary-value" id="overview-bridge-status">读取中</strong>
-              <span class="summary-caption" id="overview-bridge-caption">等待浏览器插件连接</span>
-            </article>
-          </section>
+          <div class="overview-bridge-hint">
+            <span class="status-dot" id="overview-bridge-dot"></span>
+            <div class="overview-bridge-copy">
+              <span class="overview-bridge-status" id="overview-bridge-status">读取中</span>
+              <span class="overview-bridge-caption" id="overview-bridge-caption">等待浏览器插件连接</span>
+            </div>
+          </div>
 
           <div class="overview-grid">
             <section class="section-block chart-section">
