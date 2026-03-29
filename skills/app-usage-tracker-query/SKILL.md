@@ -33,6 +33,28 @@ node src/cli/query.js <command> ...
 
 Do not guess hashed item keys. Use `search` to resolve them first.
 
+## `detail` vs `timeline`
+
+Use `timeline` for chronology. It answers questions like:
+
+- "What apps or sites were used between 13:00 and 15:00?"
+- "When did the user switch from one app to another?"
+- "What was the order of sessions on a given day?"
+
+Use `detail` for item history. It answers questions like:
+
+- "What exact pages were visited inside this site?"
+- "How much total time was spent on this app or site?"
+- "What is the day-by-day history for this tracked item?"
+
+Important distinction for agents:
+
+- `timeline` is a day view of session segments and may merge nearby segments for the same app or site to make the chronology easier to read.
+- `timeline` is no longer the authoritative source for per-page browsing detail when multiple pages from the same site are merged into one site-level session.
+- `detail --key <siteKey> --format json` is the authoritative source for concrete page-level data. Read `item.pageBreakdown` in the JSON response.
+- For website investigation, the usual flow is `search` -> resolve the site key -> `detail --key ... --format json` -> inspect `item.pageBreakdown`.
+- For activity reconstruction, the usual flow is `days` -> `timeline --day ... --format json`.
+
 ## Preferred Commands
 
 List available days:
@@ -71,6 +93,12 @@ Fetch detailed history for one item:
 app-usage-tracker-cli detail --key "service:chatgpt" --format json
 ```
 
+Fetch page-level breakdown for a site item:
+
+```powershell
+app-usage-tracker-cli detail --key "site:openai" --format json
+```
+
 Read the full serialized snapshot:
 
 ```powershell
@@ -92,7 +120,9 @@ On Windows, the default data file is `%APPDATA%/app-usage-tracker/usage-data.jso
 
 - The CLI reads the on-disk `usage-data.json`; the newest few seconds of live activity may not appear until the desktop app saves.
 - The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, timelines, searches, and snapshots.
-- `timeline` returns stored session slices when they exist. Older aggregated-only days may report totals but no session list.
+- `timeline` returns session chronology for a day. It may merge nearby segments for the same app or site, so use `detail` when you need exact page-level website detail.
+- `detail` returns item history and includes `pageBreakdown` for website items.
+- Older aggregated-only days may report totals but no session list.
 - Use `--format json` for agent workflows.
 - If `detail --query` is ambiguous, run `search` first and then call `detail --key`.
 - The installer adds the app install directory to the current user's `PATH`, but a shell opened before installation may need to be restarted before the command is available.
