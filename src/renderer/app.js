@@ -1094,12 +1094,6 @@ function renderTimelineBoard(sessions, dayKey) {
       time.textContent = timeLabel;
       card.appendChild(time);
 
-      if (metaLabel && !isCondensed) {
-        const meta = document.createElement('span');
-        meta.className = 'timeline-session-meta';
-        meta.textContent = metaLabel;
-        card.appendChild(meta);
-      }
     }
 
     if (session.isLive && !isCompact && !isCondensed) {
