@@ -115,6 +115,7 @@
 
 html,
 body {
+  height: 100%;
   margin: 0;
   min-height: 100%;
   background:
@@ -129,6 +130,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 0;
+  overflow: hidden;
 }
 
 button {
@@ -137,10 +139,14 @@ button {
 
 .app-shell {
   width: min(100%, 1360px);
+  height: 100vh;
+  max-height: 100vh;
   min-height: 100vh;
   padding: clamp(14px, 2.4vw, 26px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
+  overflow: hidden;
 }
 
 .topbar {
@@ -234,16 +240,34 @@ button {
 .content-area {
   position: relative;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .screen {
   display: none;
+  min-height: 0;
   animation: fade-slide 220ms ease;
 }
 
 .screen.active {
   display: block;
+  min-height: 0;
+  overflow: auto;
+}
+
+#timeline-screen.active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+#timeline-screen > .section-block {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .tab-row {
@@ -672,6 +696,9 @@ canvas {
 
 .timeline-page-card {
   padding-top: 18px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .timeline-status-line {
@@ -680,7 +707,8 @@ canvas {
 
 .timeline-board {
   margin-top: 18px;
-  max-height: 72vh;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   overscroll-behavior: contain;
   padding: 0 4px 6px 0;

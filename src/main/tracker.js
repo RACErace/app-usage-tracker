@@ -13,6 +13,7 @@ const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = requi
 
 const DATA_VERSION = 5;
 const POLL_INTERVAL_MS = 5000;
+const TIMELINE_SESSION_MERGE_GRACE_MS = POLL_INTERVAL_MS * 4;
 const SAVE_DEBOUNCE_MS = 1200;
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
 const MIN_IDLE_THRESHOLD_SECONDS = 60;
@@ -1195,15 +1196,18 @@ function buildTimelineSessionMergeSignature(value) {
 }
 
 function canMergeTimelineSessions(left, right) {
+  const leftStartedAt = Number(left?.startedAt) || 0;
   const leftEndedAt = Number(left?.endedAt) || 0;
   const rightStartedAt = Number(right?.startedAt) || 0;
+  const rightEndedAt = Number(right?.endedAt) || 0;
   if (!leftEndedAt || !rightStartedAt) {
     return false;
   }
 
   return (
     buildTimelineSessionMergeSignature(left) === buildTimelineSessionMergeSignature(right)
-    && rightStartedAt <= leftEndedAt
+    && rightEndedAt > leftStartedAt
+    && rightStartedAt <= (leftEndedAt + TIMELINE_SESSION_MERGE_GRACE_MS)
   );
 }
 
@@ -1212,8 +1216,16 @@ function mergeTimelineSessionInto(target, source) {
     return target;
   }
 
-  target.endedAt = Math.max(Number(target.endedAt) || 0, Number(source.endedAt) || 0);
-  target.durationMs = Math.max((Number(target.endedAt) || 0) - (Number(target.startedAt) || 0), 0);
+  const targetStartedAt = Number(target.startedAt) || 0;
+  const targetEndedAt = Number(target.endedAt) || 0;
+  const sourceStartedAt = Number(source.startedAt) || 0;
+  const sourceEndedAt = Number(source.endedAt) || 0;
+  const targetDurationMs = Number(target.durationMs) || Math.max(targetEndedAt - targetStartedAt, 0);
+  const sourceDurationMs = Number(source.durationMs) || Math.max(sourceEndedAt - sourceStartedAt, 0);
+  const overlapMs = Math.max(Math.min(targetEndedAt, sourceEndedAt) - Math.max(targetStartedAt, sourceStartedAt), 0);
+
+  target.endedAt = Math.max(targetEndedAt, sourceEndedAt);
+  target.durationMs = Math.max(targetDurationMs + sourceDurationMs - overlapMs, 0);
   target.subtitle = source.subtitle || target.subtitle;
   target.pageTitle = source.pageTitle || target.pageTitle;
   target.windowTitle = source.windowTitle || target.windowTitle;
@@ -1268,6 +1280,12 @@ function cloneStoredSession(session) {
     return null;
   }
 
+  const spannedDurationMs = Math.max(endedAt - startedAt, 0);
+  const storedDurationMs = Number(session?.durationMs) || 0;
+  const durationMs = storedDurationMs > 0
+    ? Math.min(storedDurationMs, spannedDurationMs)
+    : spannedDurationMs;
+
   const cloned = {
     key: sanitizeText(session?.key),
     kind: sanitizeText(session?.kind, 'app'),
@@ -1303,7 +1321,7 @@ function cloneStoredSession(session) {
     color: sanitizeText(session?.color, getColorFromKey(sanitizeText(session?.key))),
     startedAt,
     endedAt,
-    durationMs: Math.max(endedAt - startedAt, 0)
+    durationMs
   };
 
   if (session?.isLive) {
