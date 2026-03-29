@@ -65,6 +65,9 @@ const elements = {
   chartTooltip: document.getElementById('chart-tooltip'),
   rankingList: document.getElementById('ranking-list'),
   rankingSummary: document.getElementById('ranking-summary'),
+  timelineSectionTitle: document.getElementById('timeline-section-title'),
+  timelineSummary: document.getElementById('timeline-summary'),
+  timelineList: document.getElementById('timeline-list'),
   settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
   browserExtensionStatusDot: document.getElementById('browser-extension-status-dot'),
   browserExtensionStatusText: document.getElementById('browser-extension-status-text'),
@@ -801,6 +804,191 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
   if (elements.overviewBridgeCaption) {
     elements.overviewBridgeCaption.textContent = messages.detail;
   }
+}
+
+function formatTimelineHour(hour) {
+  return `${padNumber(hour)}:00`;
+}
+
+function formatTimelineHourRange(hour) {
+  return `${formatTimelineHour(hour)} - ${formatTimelineHour((hour + 1) % 24)}`;
+}
+
+function buildDailyTimelineEntries(day) {
+  return Array.from({ length: 24 }, (_unused, hour) => {
+    const items = (day?.items || [])
+      .map((item) => ({
+        ...item,
+        slotMs: Number(item.hourly?.[hour]) || 0
+      }))
+      .filter((item) => item.slotMs > 0)
+      .sort((left, right) => right.slotMs - left.slotMs);
+
+    const totalMs = Number(day?.hourly?.[hour]) || 0;
+    return {
+      key: `hour-${hour}`,
+      anchorLabel: formatTimelineHour(hour),
+      title: formatTimelineHourRange(hour),
+      meta: totalMs ? `${items.length} 项活跃` : '暂无活动',
+      totalMs,
+      itemCount: items.length,
+      items
+    };
+  }).filter((entry) => entry.totalMs > 0);
+}
+
+function buildWeeklyTimelineEntries(weekly) {
+  const totalsByDay = new Map((weekly?.dailyTotals || []).map((item) => [item.dayKey, Number(item.totalMs) || 0]));
+
+  return (weekly?.dayKeys || []).map((dayKey) => {
+    const items = (weekly?.items || [])
+      .map((item) => ({
+        ...item,
+        slotMs: Number(item.byDay?.[dayKey]) || 0
+      }))
+      .filter((item) => item.slotMs > 0)
+      .sort((left, right) => right.slotMs - left.slotMs);
+
+    const totalMs = totalsByDay.get(dayKey) || 0;
+    return {
+      key: `day-${dayKey}`,
+      anchorLabel: `周${weekdayLabel(dayKey)}`,
+      title: formatDayLabel(dayKey),
+      meta: totalMs ? `${items.length} 项出现` : '暂无活动',
+      totalMs,
+      itemCount: items.length,
+      items
+    };
+  });
+}
+
+function renderOverviewTimeline(activeDay, weekly) {
+  if (!elements.timelineSectionTitle || !elements.timelineSummary || !elements.timelineList) {
+    return;
+  }
+
+  const isDaily = state.selectedRange === 'daily';
+  const entries = isDaily ? buildDailyTimelineEntries(activeDay) : buildWeeklyTimelineEntries(weekly);
+  const activeEntries = entries.filter((entry) => entry.totalMs > 0);
+  const maxTotalMs = Math.max(...activeEntries.map((entry) => entry.totalMs), 0);
+
+  elements.timelineSectionTitle.textContent = isDaily ? '时间线' : '近 7 天时间线';
+  elements.timelineSummary.textContent = isDaily
+    ? `按小时聚合 · ${activeEntries.length} 个活跃时段`
+    : (entries.length
+      ? `按天聚合 · ${activeEntries.length} / ${entries.length} 天有活动`
+      : '按天聚合 · 暂无可用日期');
+  elements.timelineList.replaceChildren();
+
+  if (!activeEntries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'timeline-empty';
+    empty.textContent = isDaily
+      ? '当前日期还没有采集到可展示的活动时间段。'
+      : '近 7 天还没有采集到可展示的活动时间段。';
+    elements.timelineList.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry, index) => {
+    const row = document.createElement('article');
+    row.className = 'timeline-entry';
+    if (entry.totalMs <= 0) {
+      row.classList.add('empty');
+    }
+
+    const axis = document.createElement('div');
+    axis.className = 'timeline-axis';
+
+    const axisLabel = document.createElement('span');
+    axisLabel.className = 'timeline-axis-label';
+    axisLabel.textContent = entry.anchorLabel;
+
+    const axisDot = document.createElement('span');
+    axisDot.className = 'timeline-axis-dot';
+
+    const axisLine = document.createElement('span');
+    axisLine.className = 'timeline-axis-line';
+    axisLine.hidden = index === entries.length - 1;
+
+    axis.append(axisLabel, axisDot, axisLine);
+
+    const body = document.createElement('div');
+    body.className = 'timeline-body';
+
+    const head = document.createElement('div');
+    head.className = 'timeline-entry-head';
+
+    const title = document.createElement('strong');
+    title.className = 'timeline-entry-title';
+    title.textContent = entry.title;
+
+    const duration = document.createElement('span');
+    duration.className = 'timeline-entry-duration';
+    duration.textContent = formatDuration(entry.totalMs, 'short');
+
+    head.append(title, duration);
+
+    const meta = document.createElement('div');
+    meta.className = 'timeline-entry-meta';
+    meta.textContent = entry.meta;
+
+    const track = document.createElement('div');
+    track.className = 'timeline-track';
+
+    const bar = document.createElement('div');
+    bar.className = 'timeline-bar';
+    if (entry.totalMs > 0 && maxTotalMs > 0) {
+      bar.style.width = `${Math.max((entry.totalMs / maxTotalMs) * 100, 6)}%`;
+      bar.style.background = `linear-gradient(90deg, ${entry.items[0]?.color || '#1a8dff'}, rgba(83, 204, 255, 0.95))`;
+    } else {
+      bar.style.width = '0%';
+    }
+    track.appendChild(bar);
+
+    body.append(head, meta, track);
+
+    if (entry.items.length) {
+      const chipList = document.createElement('div');
+      chipList.className = 'timeline-chip-list';
+
+      entry.items.slice(0, 3).forEach((item) => {
+        const chip = document.createElement('button');
+        chip.className = 'timeline-chip';
+        chip.type = 'button';
+        chip.title = `${item.label} ${formatDuration(item.slotMs, 'short')}`;
+        chip.setAttribute('aria-label', `查看 ${item.label} 的详情`);
+        chip.addEventListener('click', () => openDetail(item.key));
+
+        const swatch = document.createElement('span');
+        swatch.className = 'timeline-chip-swatch';
+        swatch.style.background = item.color;
+
+        const label = document.createElement('span');
+        label.className = 'timeline-chip-label';
+        label.textContent = item.label;
+
+        const chipDuration = document.createElement('span');
+        chipDuration.className = 'timeline-chip-duration';
+        chipDuration.textContent = formatDuration(item.slotMs, 'short');
+
+        chip.append(swatch, label, chipDuration);
+        chipList.appendChild(chip);
+      });
+
+      if (entry.itemCount > 3) {
+        const more = document.createElement('span');
+        more.className = 'timeline-chip more';
+        more.textContent = `+${entry.itemCount - 3} 项`;
+        chipList.appendChild(more);
+      }
+
+      body.appendChild(chipList);
+    }
+
+    row.append(axis, body);
+    elements.timelineList.appendChild(row);
+  });
 }
 
 function renderTrackingPauseWarning(snapshot = state.snapshot) {
@@ -1639,6 +1827,7 @@ function renderOverview() {
 
   renderTrackingPauseWarning(snapshot);
   renderRanking(rankingItems, totalMs);
+  renderOverviewTimeline(activeDay, weekly);
   renderSettingsState();
 
   if (isDaily) {
