@@ -1492,7 +1492,9 @@ function renderCategoryRuleSettings() {
 function renderItemVisibilitySettings() {
   const items = getAllKnownItems();
   const hiddenKeys = getHiddenItemKeySet();
-  const selectedCount = items.filter((item) => !hiddenKeys.has(item.key)).length;
+  const selectedItems = items.filter((item) => !hiddenKeys.has(item.key));
+  const unselectedItems = items.filter((item) => hiddenKeys.has(item.key));
+  const selectedCount = selectedItems.length;
 
   elements.selectedItemsSummary.textContent = items.length
     ? `已选择 ${selectedCount} / ${items.length} 项`
@@ -1509,7 +1511,7 @@ function renderItemVisibilitySettings() {
     return;
   }
 
-  items.forEach((item) => {
+  const createItemRow = (item) => {
     const fragment = elements.settingItemTemplate.content.cloneNode(true);
     const row = fragment.querySelector('.setting-check-item');
     const input = fragment.querySelector('.setting-checkbox-input');
@@ -1533,8 +1535,48 @@ function renderItemVisibilitySettings() {
       });
     });
 
-    elements.itemVisibilityList.appendChild(fragment);
-  });
+    return fragment;
+  };
+
+  const createItemGroup = (title, groupItems, emptyText) => {
+    const section = document.createElement('section');
+    section.className = 'setting-check-group';
+
+    const header = document.createElement('div');
+    header.className = 'setting-check-group-header';
+
+    const heading = document.createElement('h4');
+    heading.className = 'setting-check-group-title';
+    heading.textContent = title;
+
+    const count = document.createElement('span');
+    count.className = 'setting-check-group-count';
+    count.textContent = `${groupItems.length} 项`;
+
+    header.append(heading, count);
+
+    const list = document.createElement('div');
+    list.className = 'setting-check-group-list';
+
+    if (!groupItems.length) {
+      const empty = document.createElement('div');
+      empty.className = 'setting-check-group-empty';
+      empty.textContent = emptyText;
+      list.appendChild(empty);
+    } else {
+      groupItems.forEach((item) => {
+        list.appendChild(createItemRow(item));
+      });
+    }
+
+    section.append(header, list);
+    return section;
+  };
+
+  elements.itemVisibilityList.append(
+    createItemGroup('已勾选项目', selectedItems, '当前没有已勾选的统计项。'),
+    createItemGroup('未勾选项目', unselectedItems, '当前没有未勾选的统计项。')
+  );
 
   hydrateSettingsIcons(items).catch(() => {});
 }
