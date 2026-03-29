@@ -940,32 +940,19 @@ function renderTimelineEmptyState(title, detail) {
 }
 
 function buildTimelineLayout(sessions) {
-  const laneEndTimes = [];
-  const minDisplayDurationMs = (TIMELINE_MIN_SESSION_WIDTH / TIMELINE_HOUR_WIDTH) * 60 * 60 * 1000;
   const positioned = [...sessions]
     .sort((left, right) => (
       Number(left.startedAt) - Number(right.startedAt)
       || Number(left.endedAt) - Number(right.endedAt)
       || (left.key || '').localeCompare(right.key || '', 'en')
     ))
-    .map((session) => {
-      let laneIndex = laneEndTimes.findIndex((laneEndAt) => laneEndAt <= Number(session.startedAt));
-      if (laneIndex < 0) {
-        laneIndex = laneEndTimes.length;
-      }
-
-      laneEndTimes[laneIndex] = Math.max(
-        Number(session.endedAt) || 0,
-        (Number(session.startedAt) || 0) + minDisplayDurationMs
-      );
-      return {
-        ...session,
-        laneIndex
-      };
-    });
+    .map((session, laneIndex) => ({
+      ...session,
+      laneIndex
+    }));
 
   return {
-    laneCount: Math.max(laneEndTimes.length, 1),
+    laneCount: Math.max(positioned.length, 1),
     sessions: positioned
   };
 }

@@ -495,13 +495,13 @@ test('timeline merges near-contiguous desktop app slices without counting the ga
     ...baseEntry,
     subtitle: 'Second Task - Codex',
     windowTitle: 'Second Task - Codex'
-  }, startedAt + 180000, startedAt + 240000);
+  }, startedAt + 239000, startedAt + 299000);
 
-  const timeline = tracker.getTimeline('2026-03-28', startedAt + 240000);
+  const timeline = tracker.getTimeline('2026-03-28', startedAt + 299000);
   assert.equal(timeline.sessions.length, 1);
   assert.equal(timeline.sessions[0].durationMs, 120000);
   assert.equal(timeline.sessions[0].startedAt, startedAt);
-  assert.equal(timeline.sessions[0].endedAt, startedAt + 240000);
+  assert.equal(timeline.sessions[0].endedAt, startedAt + 299000);
 });
 
 test('timeline stitches the same app across a brief interruption by another app', () => {
