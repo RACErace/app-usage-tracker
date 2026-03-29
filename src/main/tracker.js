@@ -1173,6 +1173,94 @@ function buildTimelineSessionSignature(value) {
   ].join('\u0001');
 }
 
+function isTimelineWebSession(value) {
+  return sanitizeText(value?.kind) === 'site' || Boolean(sanitizeText(value?.url));
+}
+
+function isTimelinePlaybackSession(value) {
+  return sanitizeText(value?.trackingMode) === 'playback';
+}
+
+function buildTimelineSessionMergeSignature(value) {
+  if (isTimelineWebSession(value) || isTimelinePlaybackSession(value)) {
+    return buildTimelineSessionSignature(value);
+  }
+
+  return [
+    sanitizeText(value?.key),
+    sanitizeText(value?.kind),
+    sanitizeText(value?.trackingMode),
+    sanitizeText(value?.trackingSource)
+  ].join('\u0001');
+}
+
+function canMergeTimelineSessions(left, right) {
+  const leftEndedAt = Number(left?.endedAt) || 0;
+  const rightStartedAt = Number(right?.startedAt) || 0;
+  if (!leftEndedAt || !rightStartedAt) {
+    return false;
+  }
+
+  return (
+    buildTimelineSessionMergeSignature(left) === buildTimelineSessionMergeSignature(right)
+    && rightStartedAt <= leftEndedAt
+  );
+}
+
+function mergeTimelineSessionInto(target, source) {
+  if (!target || !source) {
+    return target;
+  }
+
+  target.endedAt = Math.max(Number(target.endedAt) || 0, Number(source.endedAt) || 0);
+  target.durationMs = Math.max((Number(target.endedAt) || 0) - (Number(target.startedAt) || 0), 0);
+  target.subtitle = source.subtitle || target.subtitle;
+  target.pageTitle = source.pageTitle || target.pageTitle;
+  target.windowTitle = source.windowTitle || target.windowTitle;
+  target.url = source.url || target.url;
+  target.host = source.host || target.host;
+  target.pageHost = source.pageHost || target.pageHost;
+  target.path = source.path || target.path;
+  target.mediaTitle = source.mediaTitle || target.mediaTitle;
+  target.mediaArtist = source.mediaArtist || target.mediaArtist;
+  target.mediaAlbumTitle = source.mediaAlbumTitle || target.mediaAlbumTitle;
+  target.playbackStatus = source.playbackStatus || target.playbackStatus;
+  target.playbackType = source.playbackType || target.playbackType;
+  target.processName = source.processName || target.processName;
+  target.audioSessionState = source.audioSessionState || target.audioSessionState;
+  target.audioPeakValue = Math.max(Number(target.audioPeakValue) || 0, Number(source.audioPeakValue) || 0);
+  target.audioIsMuted = typeof source.audioIsMuted === 'boolean' ? source.audioIsMuted : target.audioIsMuted;
+  target.audioEndpointId = source.audioEndpointId || target.audioEndpointId;
+  target.audioSessionIdentifier = source.audioSessionIdentifier || target.audioSessionIdentifier;
+  target.audioSessionInstanceIdentifier = source.audioSessionInstanceIdentifier || target.audioSessionInstanceIdentifier;
+  if (target.isLive || source.isLive) {
+    target.isLive = true;
+  } else {
+    delete target.isLive;
+  }
+
+  return target;
+}
+
+function mergeTimelineSessions(source) {
+  const merged = [];
+  const sortedSessions = [...(Array.isArray(source) ? source : [])].sort((left, right) => (
+    (Number(left?.startedAt) || 0) - (Number(right?.startedAt) || 0)
+    || (Number(left?.endedAt) || 0) - (Number(right?.endedAt) || 0)
+    || sanitizeText(left?.key).localeCompare(sanitizeText(right?.key), 'en')
+  ));
+
+  for (const session of sortedSessions) {
+    if (!session) {
+      continue;
+    }
+
+    appendTimelineSession(merged, session);
+  }
+
+  return merged;
+}
+
 function cloneStoredSession(session) {
   const startedAt = Number(session?.startedAt) || 0;
   const endedAt = Number(session?.endedAt) || 0;
@@ -1252,37 +1340,8 @@ function appendTimelineSession(sessions, session) {
   }
 
   const lastSession = sessions[sessions.length - 1];
-  if (
-    lastSession
-    && buildTimelineSessionSignature(lastSession) === buildTimelineSessionSignature(session)
-    && Number(lastSession.endedAt) === Number(session.startedAt)
-  ) {
-    lastSession.endedAt = session.endedAt;
-    lastSession.durationMs = Math.max((Number(lastSession.endedAt) || 0) - (Number(lastSession.startedAt) || 0), 0);
-    lastSession.subtitle = session.subtitle || lastSession.subtitle;
-    lastSession.pageTitle = session.pageTitle || lastSession.pageTitle;
-    lastSession.windowTitle = session.windowTitle || lastSession.windowTitle;
-    lastSession.url = session.url || lastSession.url;
-    lastSession.host = session.host || lastSession.host;
-    lastSession.pageHost = session.pageHost || lastSession.pageHost;
-    lastSession.path = session.path || lastSession.path;
-    lastSession.mediaTitle = session.mediaTitle || lastSession.mediaTitle;
-    lastSession.mediaArtist = session.mediaArtist || lastSession.mediaArtist;
-    lastSession.mediaAlbumTitle = session.mediaAlbumTitle || lastSession.mediaAlbumTitle;
-    lastSession.playbackStatus = session.playbackStatus || lastSession.playbackStatus;
-    lastSession.playbackType = session.playbackType || lastSession.playbackType;
-    lastSession.processName = session.processName || lastSession.processName;
-    lastSession.audioSessionState = session.audioSessionState || lastSession.audioSessionState;
-    lastSession.audioPeakValue = Math.max(Number(lastSession.audioPeakValue) || 0, Number(session.audioPeakValue) || 0);
-    lastSession.audioIsMuted = typeof session.audioIsMuted === 'boolean' ? session.audioIsMuted : lastSession.audioIsMuted;
-    lastSession.audioEndpointId = session.audioEndpointId || lastSession.audioEndpointId;
-    lastSession.audioSessionIdentifier = session.audioSessionIdentifier || lastSession.audioSessionIdentifier;
-    lastSession.audioSessionInstanceIdentifier = session.audioSessionInstanceIdentifier || lastSession.audioSessionInstanceIdentifier;
-    if (lastSession.isLive || session.isLive) {
-      lastSession.isLive = true;
-    } else {
-      delete lastSession.isLive;
-    }
+  if (lastSession && canMergeTimelineSessions(lastSession, session)) {
+    mergeTimelineSessionInto(lastSession, session);
     return;
   }
 
@@ -3387,17 +3446,18 @@ class UsageTracker {
       }
     }
 
-    const totalMs = sessions.reduce((sum, session) => sum + (Number(session.durationMs) || 0), 0);
+    const mergedSessions = mergeTimelineSessions(sessions);
+    const totalMs = mergedSessions.reduce((sum, session) => sum + (Number(session.durationMs) || 0), 0);
     const storedSessionCount = cloneStoredSessions(day.sessions).length;
 
     return {
       dayKey: resolvedDayKey,
       totalMs,
-      sessionCount: sessions.length,
+      sessionCount: mergedSessions.length,
       availableDays,
       hasStoredSessions: storedSessionCount > 0,
       hasAggregatedData: (Number(day.totalMs) || 0) > 0,
-      sessions
+      sessions: mergedSessions
     };
   }
 
