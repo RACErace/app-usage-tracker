@@ -186,6 +186,33 @@ function padNumber(value) {
   return String(value).padStart(2, '0');
 }
 
+function colorToRgbTriplet(color) {
+  const value = String(color || '').trim();
+  const hexMatch = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1].length === 3
+      ? hexMatch[1].split('').map((segment) => segment + segment).join('')
+      : hexMatch[1];
+    const red = parseInt(hex.slice(0, 2), 16);
+    const green = parseInt(hex.slice(2, 4), 16);
+    const blue = parseInt(hex.slice(4, 6), 16);
+    return `${red}, ${green}, ${blue}`;
+  }
+
+  const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const channels = rgbMatch[1]
+      .split(',')
+      .slice(0, 3)
+      .map((segment) => Math.max(0, Math.min(255, Math.round(Number.parseFloat(segment) || 0))));
+    if (channels.length === 3) {
+      return channels.join(', ');
+    }
+  }
+
+  return '';
+}
+
 function getLocalDayKey(date = new Date()) {
   return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
 }
@@ -1045,7 +1072,9 @@ function renderTimelineBoard(sessions, dayKey) {
     card.style.height = `${TIMELINE_CARD_HEIGHT}px`;
     card.style.left = `${left}px`;
     card.style.width = `${width}px`;
-    card.style.setProperty('--session-color', session.color || 'var(--accent)');
+    const sessionColor = session.color || 'var(--accent)';
+    card.style.setProperty('--session-color', sessionColor);
+    card.style.setProperty('--session-color-rgb', colorToRgbTriplet(sessionColor) || '28, 132, 255');
     card.title = [titleLabel, timeLabel, metaLabel].filter(Boolean).join('\n');
     card.setAttribute('aria-label', `查看 ${titleLabel} 的详情`);
     card.addEventListener('click', () => openDetail(session.key));
