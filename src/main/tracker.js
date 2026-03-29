@@ -14,6 +14,7 @@ const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = requi
 const DATA_VERSION = 5;
 const POLL_INTERVAL_MS = 5000;
 const TIMELINE_SESSION_MERGE_GRACE_MS = POLL_INTERVAL_MS * 4;
+const TIMELINE_SESSION_STITCH_GAP_MS = 2 * 60 * 1000;
 const SAVE_DEBOUNCE_MS = 1200;
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 5 * 60;
 const MIN_IDLE_THRESHOLD_SECONDS = 60;
@@ -1211,6 +1212,23 @@ function canMergeTimelineSessions(left, right) {
   );
 }
 
+function canStitchTimelineSessions(left, right) {
+  const leftStartedAt = Number(left?.startedAt) || 0;
+  const leftEndedAt = Number(left?.endedAt) || 0;
+  const rightStartedAt = Number(right?.startedAt) || 0;
+  const rightEndedAt = Number(right?.endedAt) || 0;
+  if (!leftEndedAt || !rightStartedAt) {
+    return false;
+  }
+
+  return (
+    buildTimelineSessionMergeSignature(left) === buildTimelineSessionMergeSignature(right)
+    && rightEndedAt > leftStartedAt
+    && rightStartedAt > leftEndedAt
+    && rightStartedAt <= (leftEndedAt + TIMELINE_SESSION_STITCH_GAP_MS)
+  );
+}
+
 function mergeTimelineSessionInto(target, source) {
   if (!target || !source) {
     return target;
@@ -1267,7 +1285,17 @@ function mergeTimelineSessions(source) {
       continue;
     }
 
-    appendTimelineSession(merged, session);
+    const targetIndex = merged.findLastIndex((candidate) => (
+      canMergeTimelineSessions(candidate, session)
+      || canStitchTimelineSessions(candidate, session)
+    ));
+
+    if (targetIndex >= 0) {
+      mergeTimelineSessionInto(merged[targetIndex], session);
+      continue;
+    }
+
+    merged.push(session);
   }
 
   return merged;
