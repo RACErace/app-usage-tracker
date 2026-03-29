@@ -247,6 +247,19 @@ GitHub Release 工作流也会同时发布 `skills.zip`。
 
 ---
 
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 桌面框架 | Electron 35 |
+| 主进程 / 后端 | Node.js |
+| 前端 | 原生 HTML + CSS + JavaScript |
+| CLI | Node.js |
+| 存储 | 本地 JSON |
+| 打包 | electron-builder |
+
+---
+
 ## 开发
 
 ```powershell

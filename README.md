@@ -247,6 +247,19 @@ By default the app stores data under `%APPDATA%\app-usage-tracker\`:
 
 ---
 
+## Tech Stack
+
+| Layer | Technology |
+|------|------|
+| Desktop framework | Electron 35 |
+| Main process / backend | Node.js |
+| Frontend | Vanilla HTML + CSS + JavaScript |
+| CLI | Node.js |
+| Storage | Local JSON |
+| Packaging | electron-builder |
+
+---
+
 ## Development
 
 ```powershell
