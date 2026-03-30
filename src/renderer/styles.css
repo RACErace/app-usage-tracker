@@ -173,6 +173,7 @@ button {
 .icon-button,
 .pill-button,
 .range-tab,
+.subnav-tab,
 .option-chip,
 .ranking-item,
 .text-button {
@@ -181,6 +182,7 @@ button {
 
 .icon-button:hover,
 .pill-button:hover,
+.subnav-tab:hover,
 .option-chip:hover,
 .range-tab:hover,
 .text-button:hover {
@@ -190,6 +192,7 @@ button {
 .icon-button:focus-visible,
 .pill-button:focus-visible,
 .range-tab:focus-visible,
+.subnav-tab:focus-visible,
 .option-chip:focus-visible,
 .text-button:focus-visible,
 .ranking-item:focus-visible,
@@ -240,7 +243,7 @@ button {
 .content-area {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 18px;
   min-height: 0;
   overflow: hidden;
@@ -270,9 +273,9 @@ button {
   min-height: 0;
 }
 
-.tab-row {
+.tab-row,
+.settings-subnav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
   margin-top: 0;
@@ -285,12 +288,27 @@ button {
   backdrop-filter: blur(18px);
 }
 
+.tab-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.settings-subnav {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .tab-row.hidden-nav {
   display: none;
 }
 
-.range-tab {
+.settings-subnav[hidden],
+.settings-group[hidden] {
+  display: none;
+}
+
+.range-tab,
+.subnav-tab {
   position: relative;
+  width: 100%;
   padding: 11px 14px;
   border: 0;
   background: transparent;
@@ -299,6 +317,7 @@ button {
   font-weight: 700;
   cursor: pointer;
   border-radius: 16px;
+  text-align: center;
   transition: background 180ms ease, color 180ms ease, transform 180ms ease;
 }
 
@@ -307,12 +326,14 @@ button {
   text-align: center;
 }
 
-.range-tab.active {
+.range-tab.active,
+.subnav-tab.active {
   color: var(--text);
   background: var(--surface-2);
 }
 
-.range-tab.active::after {
+.range-tab.active::after,
+.subnav-tab.active::after {
   content: "";
   position: absolute;
   left: 50%;
@@ -1058,6 +1079,11 @@ canvas {
   margin: 12px 0 0;
 }
 
+.settings-group {
+  display: grid;
+  gap: 20px;
+}
+
 .settings-section-header {
   align-items: flex-start;
 }
@@ -1629,6 +1655,10 @@ canvas {
   }
 
   .tab-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-subnav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

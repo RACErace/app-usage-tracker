@@ -17,6 +17,13 @@ const DEFAULT_CATEGORY_OPTIONS = Object.freeze([
   { id: 'study', label: '学习' },
   { id: 'communication', label: '沟通' }
 ]);
+const SETTINGS_SECTION_IDS = Object.freeze([
+  'general',
+  'tracking',
+  'rules',
+  'backup',
+  'display'
+]);
 const systemThemeMediaQuery = typeof window.matchMedia === 'function'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null;
@@ -34,6 +41,7 @@ const state = {
   detailReturnScreen: 'overview',
   detail: null,
   activeScreen: 'overview',
+  selectedSettingsSection: SETTINGS_SECTION_IDS[0],
   iconCache: new Map(),
   unsubscribe: null,
   updatingHiddenItems: false,
@@ -59,9 +67,12 @@ const elements = {
   timelineScreen: document.getElementById('timeline-screen'),
   detailScreen: document.getElementById('detail-screen'),
   settingsScreen: document.getElementById('settings-screen'),
+  settingsSubnav: document.getElementById('settings-subnav'),
   timelineButton: document.getElementById('timeline-button'),
   settingsButton: document.getElementById('settings-button'),
   rangeTabs: [...document.querySelectorAll('.range-tab')],
+  settingsSectionTabs: [...document.querySelectorAll('[data-settings-section]')],
+  settingsSectionPanels: [...document.querySelectorAll('[data-settings-section-panel]')],
   previousDay: document.getElementById('previous-day'),
   nextDay: document.getElementById('next-day'),
   dateLabel: document.getElementById('date-label'),
@@ -176,6 +187,10 @@ function formatDuration(ms, mode = 'long') {
   }
 
   return `${minutes}分钟`;
+}
+
+function normalizeSettingsSection(section) {
+  return SETTINGS_SECTION_IDS.includes(section) ? section : SETTINGS_SECTION_IDS[0];
 }
 
 function padNumber(value) {
@@ -1688,6 +1703,26 @@ function updateTopTabs() {
   });
 }
 
+function updateSettingsSubnav() {
+  const isSettings = state.activeScreen === 'settings';
+  const activeSection = normalizeSettingsSection(state.selectedSettingsSection);
+  state.selectedSettingsSection = activeSection;
+
+  if (elements.settingsSubnav) {
+    elements.settingsSubnav.hidden = !isSettings;
+  }
+
+  elements.settingsSectionTabs.forEach((button) => {
+    const isActive = isSettings && button.dataset.settingsSection === activeSection;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+
+  elements.settingsSectionPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.settingsSectionPanel !== activeSection;
+  });
+}
+
 function showScreen(screen) {
   state.activeScreen = screen;
   hideTimelineTooltip();
@@ -1697,6 +1732,7 @@ function showScreen(screen) {
   elements.settingsScreen.classList.toggle('active', screen === 'settings');
   updateTopTabs();
   updateHeader();
+  updateSettingsSubnav();
 }
 
 function renderSettingsState() {
@@ -3031,13 +3067,28 @@ function bindEvents() {
         return;
       }
 
-       if (tab.id === 'timeline-button') {
+      if (tab.id === 'timeline-button') {
         renderTimelineScreen();
         return;
       }
 
       state.selectedRange = tab.dataset.range;
       renderOverview();
+    });
+  });
+
+  elements.settingsSectionTabs.forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextSection = normalizeSettingsSection(button.dataset.settingsSection);
+      if (state.selectedSettingsSection === nextSection && state.activeScreen === 'settings') {
+        return;
+      }
+
+      state.selectedSettingsSection = nextSection;
+      updateSettingsSubnav();
+      if (state.activeScreen === 'settings' && typeof elements.settingsScreen?.scrollTo === 'function') {
+        elements.settingsScreen.scrollTo({ top: 0, behavior: 'auto' });
+      }
     });
   });
 

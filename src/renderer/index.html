@@ -23,6 +23,14 @@
           <button class="range-tab tab-settings-button" type="button" id="settings-button">设置</button>
         </div>
 
+        <div class="settings-subnav" id="settings-subnav" hidden aria-label="设置目录">
+          <button class="subnav-tab active" type="button" data-settings-section="general" aria-pressed="true">通用</button>
+          <button class="subnav-tab" type="button" data-settings-section="tracking" aria-pressed="false">统计控制</button>
+          <button class="subnav-tab" type="button" data-settings-section="rules" aria-pressed="false">规则与分类</button>
+          <button class="subnav-tab" type="button" data-settings-section="backup" aria-pressed="false">备份与恢复</button>
+          <button class="subnav-tab" type="button" data-settings-section="display" aria-pressed="false">显示</button>
+        </div>
+
         <section class="screen active" id="overview-screen">
 
           <section class="date-strip">
@@ -168,232 +176,242 @@
         <section class="screen" id="settings-screen">
           <div class="settings-layout">
             <div class="settings-stack">
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header">
-                  <div>
-                    <h3 class="section-title">主题样式</h3>
-                    <p class="settings-description">在浅色、深色和跟随系统之间切换，主题会立即应用到图表、卡片和整体背景。</p>
-                  </div>
-                </div>
-
-                <div class="option-chip-group" id="theme-preference-group" role="radiogroup" aria-label="主题样式">
-                  <button class="option-chip" type="button" data-theme-preference="light" role="radio" aria-checked="false">浅色主题</button>
-                  <button class="option-chip" type="button" data-theme-preference="dark" role="radio" aria-checked="false">深色主题</button>
-                  <button class="option-chip" type="button" data-theme-preference="system" role="radio" aria-checked="false">跟随系统</button>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot" id="theme-status-dot"></span>
-                  <span class="status-text" id="theme-status-text">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
-                  <div class="setting-copy">
-                    <span class="setting-name">开机自启动</span>
-                    <span class="setting-text">登录 Windows 后自动启动应用，并默认常驻托盘。</span>
-                  </div>
-                  <span class="toggle-switch" id="auto-launch-switch" aria-hidden="true">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </button>
-
-                <div class="setting-status-line">
-                  <span class="status-dot" id="auto-launch-dot"></span>
-                  <span class="status-text" id="auto-launch-status">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <button class="setting-row" type="button" id="manual-pause-toggle" aria-label="切换手动暂停">
-                  <div class="setting-copy">
-                    <span class="setting-name">手动暂停统计</span>
-                    <span class="setting-text">暂停后不会累计前台窗口、网页和音乐播放时长，直到你手动恢复。</span>
-                  </div>
-                  <span class="toggle-switch" id="manual-pause-switch" aria-hidden="true">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </button>
-
-                <div class="setting-status-line">
-                  <span class="status-dot" id="manual-pause-dot"></span>
-                  <span class="status-text" id="manual-pause-status">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <button class="setting-row" type="button" id="idle-detection-toggle" aria-label="切换空闲检测">
-                  <div class="setting-copy">
-                    <span class="setting-name">空闲检测</span>
-                    <span class="setting-text">连续一段时间没有键盘或鼠标输入时，自动暂停前台窗口和网页统计；音乐播放会继续累计。</span>
-                  </div>
-                  <span class="toggle-switch" id="idle-detection-switch" aria-hidden="true">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </button>
-
-                <div class="settings-inline-form">
-                  <label class="settings-field" for="idle-threshold-value">
-                    <span class="settings-field-label">空闲阈值（分钟）</span>
-                    <div class="settings-frequency-controls">
-                      <input class="settings-number-input" id="idle-threshold-value" type="number" min="1" step="1" value="5" />
+              <section class="settings-group" data-settings-section-panel="general">
+                <article class="card settings-panel">
+                  <button class="setting-row" type="button" id="auto-launch-toggle" aria-label="切换开机自启动">
+                    <div class="setting-copy">
+                      <span class="setting-name">开机自启动</span>
+                      <span class="setting-text">登录 Windows 后自动启动应用，并默认常驻托盘。</span>
                     </div>
-                  </label>
-                </div>
+                    <span class="toggle-switch" id="auto-launch-switch" aria-hidden="true">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </button>
 
-                <div class="setting-status-line">
-                  <span class="status-dot" id="idle-detection-dot"></span>
-                  <span class="status-text" id="idle-detection-status">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <button class="setting-row" type="button" id="lock-screen-pause-toggle" aria-label="切换锁屏暂停">
-                  <div class="setting-copy">
-                    <span class="setting-name">锁屏暂停</span>
-                    <span class="setting-text">Windows 锁屏后立即暂停前台窗口、网页和音乐播放统计，解锁后再恢复采集。</span>
+                  <div class="setting-status-line">
+                    <span class="status-dot" id="auto-launch-dot"></span>
+                    <span class="status-text" id="auto-launch-status">读取中</span>
                   </div>
-                  <span class="toggle-switch" id="lock-screen-pause-switch" aria-hidden="true">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </button>
+                </article>
 
-                <div class="setting-status-line">
-                  <span class="status-dot" id="lock-screen-pause-dot"></span>
-                  <span class="status-text" id="lock-screen-pause-status">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header close-setting-header">
-                  <div>
-                    <h3 class="section-title">关闭窗口时</h3>
-                    <p class="settings-description">设置点击窗口关闭按钮后的默认行为。</p>
-                  </div>
-                </div>
-
-                <div class="option-chip-group" id="close-action-group" role="radiogroup" aria-label="关闭窗口时的默认操作">
-                  <button class="option-chip" type="button" data-close-action="exit" role="radio" aria-checked="false">退出应用</button>
-                  <button class="option-chip" type="button" data-close-action="tray" role="radio" aria-checked="false">最小化到系统托盘</button>
-                  <button class="option-chip" type="button" data-close-action="ask" role="radio" aria-checked="false">每次都询问</button>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot active"></span>
-                  <span class="status-text" id="close-action-status">读取中</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header">
-                  <div>
-                    <h3 class="section-title">数据备份与恢复</h3>
-                    <p class="settings-description">导出当前统计数据与设置为 JSON 文件；恢复时会覆盖本机现有统计数据，也支持直接导入旧的 usage-data.json。</p>
-                  </div>
-                  <div class="settings-actions">
-                    <button class="option-chip" type="button" id="export-backup-button">导出备份</button>
-                    <button class="option-chip" type="button" id="import-backup-button">导入恢复</button>
-                  </div>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot" id="backup-status-dot"></span>
-                  <span class="status-text" id="backup-status-text">可将当前统计数据与设置导出为 JSON 备份文件。</span>
-                </div>
-              </article>
-
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header">
-                  <div>
-                    <h3 class="section-title">服务合并规则</h3>
-                    <p class="settings-description">把桌面应用和网页域名合并成一个服务。规则会按列表顺序依次匹配，越靠前优先级越高。</p>
-                  </div>
-                  <div class="settings-actions">
-                    <button class="option-chip" type="button" id="add-service-rule-button">新增规则</button>
-                    <button class="option-chip" type="button" id="save-service-rules-button">保存规则</button>
-                  </div>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot active"></span>
-                  <span class="status-text" id="service-rules-summary">读取中</span>
-                </div>
-
-                <div class="setting-rule-list" id="service-rule-list"></div>
-              </article>
-
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header">
-                  <div>
-                    <h3 class="section-title">分类规则</h3>
-                    <p class="settings-description">给应用、网站或服务打上“工作 / 娱乐 / 学习 / 沟通”等分类；同样按列表顺序依次匹配。</p>
-                  </div>
-                  <div class="settings-actions">
-                    <button class="option-chip" type="button" id="add-category-rule-button">新增规则</button>
-                    <button class="option-chip" type="button" id="save-category-rules-button">保存规则</button>
-                  </div>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot active"></span>
-                  <span class="status-text" id="category-rules-summary">读取中</span>
-                </div>
-
-                <div class="setting-rule-list" id="category-rule-list"></div>
-              </article>
-
-              <article class="card settings-panel">
-                <button class="setting-row" type="button" id="auto-backup-toggle" aria-label="切换自动备份">
-                  <div class="setting-copy">
-                    <span class="setting-name">自动备份</span>
-                    <span class="setting-text">应用会按你设定的频率自动生成 JSON 备份，并保存到本地自动备份目录。</span>
-                  </div>
-                  <span class="toggle-switch" id="auto-backup-switch" aria-hidden="true">
-                    <span class="toggle-thumb"></span>
-                  </span>
-                </button>
-
-                <div class="settings-inline-form">
-                  <label class="settings-field" for="auto-backup-interval-value">
-                    <span class="settings-field-label">备份频率</span>
-                    <div class="settings-frequency-controls">
-                      <input class="settings-number-input" id="auto-backup-interval-value" type="number" min="1" step="1" value="24" />
-                      <select class="settings-select" id="auto-backup-interval-unit" aria-label="自动备份频率单位">
-                        <option value="hours">小时</option>
-                        <option value="days">天</option>
-                      </select>
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header close-setting-header">
+                    <div>
+                      <h3 class="section-title">关闭窗口时</h3>
+                      <p class="settings-description">设置点击窗口关闭按钮后的默认行为。</p>
                     </div>
-                  </label>
-                </div>
-
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot" id="auto-backup-dot"></span>
-                  <span class="status-text" id="auto-backup-status">读取中</span>
-                </div>
-
-                <p class="bridge-hint" id="auto-backup-path-text"></p>
-              </article>
-
-              <article class="card settings-panel">
-                <div class="section-title-row settings-section-header">
-                  <div>
-                    <h3 class="section-title">显示统计项</h3>
-                    <p class="settings-description">只有勾选的项目会显示在排行与详情中，并参与总使用时长计算。</p>
                   </div>
-                  <div class="settings-actions">
-                    <button class="text-button inline-button" type="button" id="select-all-items-button">全选</button>
-                    <button class="text-button inline-button" type="button" id="clear-all-items-button">清空</button>
+
+                  <div class="option-chip-group" id="close-action-group" role="radiogroup" aria-label="关闭窗口时的默认操作">
+                    <button class="option-chip" type="button" data-close-action="exit" role="radio" aria-checked="false">退出应用</button>
+                    <button class="option-chip" type="button" data-close-action="tray" role="radio" aria-checked="false">最小化到系统托盘</button>
+                    <button class="option-chip" type="button" data-close-action="ask" role="radio" aria-checked="false">每次都询问</button>
                   </div>
-                </div>
 
-                <div class="setting-status-line selection-summary-line">
-                  <span class="status-dot active"></span>
-                  <span class="status-text" id="selected-items-summary">已选择 0 项</span>
-                </div>
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot active"></span>
+                    <span class="status-text" id="close-action-status">读取中</span>
+                  </div>
+                </article>
 
-                <div class="setting-check-list" id="item-visibility-list"></div>
-              </article>
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header">
+                    <div>
+                      <h3 class="section-title">主题样式</h3>
+                      <p class="settings-description">在浅色、深色和跟随系统之间切换，主题会立即应用到图表、卡片和整体背景。</p>
+                    </div>
+                  </div>
+
+                  <div class="option-chip-group" id="theme-preference-group" role="radiogroup" aria-label="主题样式">
+                    <button class="option-chip" type="button" data-theme-preference="light" role="radio" aria-checked="false">浅色主题</button>
+                    <button class="option-chip" type="button" data-theme-preference="dark" role="radio" aria-checked="false">深色主题</button>
+                    <button class="option-chip" type="button" data-theme-preference="system" role="radio" aria-checked="false">跟随系统</button>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot" id="theme-status-dot"></span>
+                    <span class="status-text" id="theme-status-text">读取中</span>
+                  </div>
+                </article>
+              </section>
+
+              <section class="settings-group" data-settings-section-panel="tracking" hidden>
+                <article class="card settings-panel">
+                  <button class="setting-row" type="button" id="manual-pause-toggle" aria-label="切换手动暂停">
+                    <div class="setting-copy">
+                      <span class="setting-name">手动暂停统计</span>
+                      <span class="setting-text">暂停后不会累计前台窗口、网页和音乐播放时长，直到你手动恢复。</span>
+                    </div>
+                    <span class="toggle-switch" id="manual-pause-switch" aria-hidden="true">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </button>
+
+                  <div class="setting-status-line">
+                    <span class="status-dot" id="manual-pause-dot"></span>
+                    <span class="status-text" id="manual-pause-status">读取中</span>
+                  </div>
+                </article>
+
+                <article class="card settings-panel">
+                  <button class="setting-row" type="button" id="idle-detection-toggle" aria-label="切换空闲检测">
+                    <div class="setting-copy">
+                      <span class="setting-name">空闲检测</span>
+                      <span class="setting-text">连续一段时间没有键盘或鼠标输入时，自动暂停前台窗口和网页统计；音乐播放会继续累计。</span>
+                    </div>
+                    <span class="toggle-switch" id="idle-detection-switch" aria-hidden="true">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </button>
+
+                  <div class="settings-inline-form">
+                    <label class="settings-field" for="idle-threshold-value">
+                      <span class="settings-field-label">空闲阈值（分钟）</span>
+                      <div class="settings-frequency-controls">
+                        <input class="settings-number-input" id="idle-threshold-value" type="number" min="1" step="1" value="5" />
+                      </div>
+                    </label>
+                  </div>
+
+                  <div class="setting-status-line">
+                    <span class="status-dot" id="idle-detection-dot"></span>
+                    <span class="status-text" id="idle-detection-status">读取中</span>
+                  </div>
+                </article>
+
+                <article class="card settings-panel">
+                  <button class="setting-row" type="button" id="lock-screen-pause-toggle" aria-label="切换锁屏暂停">
+                    <div class="setting-copy">
+                      <span class="setting-name">锁屏暂停</span>
+                      <span class="setting-text">Windows 锁屏后立即暂停前台窗口、网页和音乐播放统计，解锁后再恢复采集。</span>
+                    </div>
+                    <span class="toggle-switch" id="lock-screen-pause-switch" aria-hidden="true">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </button>
+
+                  <div class="setting-status-line">
+                    <span class="status-dot" id="lock-screen-pause-dot"></span>
+                    <span class="status-text" id="lock-screen-pause-status">读取中</span>
+                  </div>
+                </article>
+              </section>
+
+              <section class="settings-group" data-settings-section-panel="rules" hidden>
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header">
+                    <div>
+                      <h3 class="section-title">服务合并规则</h3>
+                      <p class="settings-description">把桌面应用和网页域名合并成一个服务。规则会按列表顺序依次匹配，越靠前优先级越高。</p>
+                    </div>
+                    <div class="settings-actions">
+                      <button class="option-chip" type="button" id="add-service-rule-button">新增规则</button>
+                      <button class="option-chip" type="button" id="save-service-rules-button">保存规则</button>
+                    </div>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot active"></span>
+                    <span class="status-text" id="service-rules-summary">读取中</span>
+                  </div>
+
+                  <div class="setting-rule-list" id="service-rule-list"></div>
+                </article>
+
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header">
+                    <div>
+                      <h3 class="section-title">分类规则</h3>
+                      <p class="settings-description">给应用、网站或服务打上“工作 / 娱乐 / 学习 / 沟通”等分类；同样按列表顺序依次匹配。</p>
+                    </div>
+                    <div class="settings-actions">
+                      <button class="option-chip" type="button" id="add-category-rule-button">新增规则</button>
+                      <button class="option-chip" type="button" id="save-category-rules-button">保存规则</button>
+                    </div>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot active"></span>
+                    <span class="status-text" id="category-rules-summary">读取中</span>
+                  </div>
+
+                  <div class="setting-rule-list" id="category-rule-list"></div>
+                </article>
+              </section>
+
+              <section class="settings-group" data-settings-section-panel="backup" hidden>
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header">
+                    <div>
+                      <h3 class="section-title">数据备份与恢复</h3>
+                      <p class="settings-description">导出当前统计数据与设置为 JSON 文件；恢复时会覆盖本机现有统计数据，也支持直接导入旧的 usage-data.json。</p>
+                    </div>
+                    <div class="settings-actions">
+                      <button class="option-chip" type="button" id="export-backup-button">导出备份</button>
+                      <button class="option-chip" type="button" id="import-backup-button">导入恢复</button>
+                    </div>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot" id="backup-status-dot"></span>
+                    <span class="status-text" id="backup-status-text">可将当前统计数据与设置导出为 JSON 备份文件。</span>
+                  </div>
+                </article>
+
+                <article class="card settings-panel">
+                  <button class="setting-row" type="button" id="auto-backup-toggle" aria-label="切换自动备份">
+                    <div class="setting-copy">
+                      <span class="setting-name">自动备份</span>
+                      <span class="setting-text">应用会按你设定的频率自动生成 JSON 备份，并保存到本地自动备份目录。</span>
+                    </div>
+                    <span class="toggle-switch" id="auto-backup-switch" aria-hidden="true">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                  </button>
+
+                  <div class="settings-inline-form">
+                    <label class="settings-field" for="auto-backup-interval-value">
+                      <span class="settings-field-label">备份频率</span>
+                      <div class="settings-frequency-controls">
+                        <input class="settings-number-input" id="auto-backup-interval-value" type="number" min="1" step="1" value="24" />
+                        <select class="settings-select" id="auto-backup-interval-unit" aria-label="自动备份频率单位">
+                          <option value="hours">小时</option>
+                          <option value="days">天</option>
+                        </select>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot" id="auto-backup-dot"></span>
+                    <span class="status-text" id="auto-backup-status">读取中</span>
+                  </div>
+
+                  <p class="bridge-hint" id="auto-backup-path-text"></p>
+                </article>
+              </section>
+
+              <section class="settings-group" data-settings-section-panel="display" hidden>
+                <article class="card settings-panel">
+                  <div class="section-title-row settings-section-header">
+                    <div>
+                      <h3 class="section-title">显示统计项</h3>
+                      <p class="settings-description">只有勾选的项目会显示在排行与详情中，并参与总使用时长计算。</p>
+                    </div>
+                    <div class="settings-actions">
+                      <button class="text-button inline-button" type="button" id="select-all-items-button">全选</button>
+                      <button class="text-button inline-button" type="button" id="clear-all-items-button">清空</button>
+                    </div>
+                  </div>
+
+                  <div class="setting-status-line selection-summary-line">
+                    <span class="status-dot active"></span>
+                    <span class="status-text" id="selected-items-summary">已选择 0 项</span>
+                  </div>
+
+                  <div class="setting-check-list" id="item-visibility-list"></div>
+                </article>
+              </section>
             </div>
 
           </div>
