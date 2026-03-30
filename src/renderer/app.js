@@ -1613,6 +1613,33 @@ function showTooltip({ tooltip, rect, chartPoint, valueText, labelText, rows = [
   tooltip.style.top = `${Math.max(relativeY * 100 - 4, 15)}%`;
 }
 
+function renderTooltipChip(chipNode, row) {
+  chipNode.className = 'tooltip-chip';
+  chipNode.setAttribute('aria-hidden', 'true');
+
+  if (row.item) {
+    setAvatarContent(chipNode, row.item, state.iconCache.get(row.item.key) || null);
+
+    if (!state.iconCache.has(row.item.key)) {
+      requestIcons([row.item])
+        .then(() => {
+          if (!chipNode.isConnected) {
+            return;
+          }
+
+          setAvatarContent(chipNode, row.item, state.iconCache.get(row.item.key) || null);
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+
+  chipNode.textContent = row.chipText || '';
+  if (row.chipColor) {
+    chipNode.style.background = row.chipColor;
+  }
+}
+
 function createTooltipList(rows) {
   if (!rows.length) {
     return null;
@@ -1625,16 +1652,9 @@ function createTooltipList(rows) {
     const rowNode = document.createElement('div');
     rowNode.className = 'tooltip-row';
 
-    if (row.chipText || row.chipColor) {
+    if (row.item || row.chipText || row.chipColor) {
       const chipNode = document.createElement('span');
-      chipNode.className = 'tooltip-chip';
-      chipNode.textContent = row.chipText || '';
-      if (row.chipColor) {
-        chipNode.style.background = row.chipColor;
-      }
-      if (!row.chipText) {
-        chipNode.setAttribute('aria-hidden', 'true');
-      }
+      renderTooltipChip(chipNode, row);
       rowNode.appendChild(chipNode);
     }
 
@@ -2366,9 +2386,7 @@ function renderOverview() {
       onHover: (hit, rect) => {
         const topItems = activeDay.items
           .map((item) => ({
-            label: item.label,
-            initials: getInitials(item),
-            color: item.color,
+            item,
             minutes: Math.round(((item.hourly && item.hourly[hit.index]) || 0) / 60000)
           }))
           .filter((item) => item.minutes > 0)
@@ -2383,9 +2401,8 @@ function renderOverview() {
             valueText: formatDuration(hit.value * 60000),
             labelText: `${hit.index} 时 - ${hit.index + 1} 时`,
             rows: topItems.map((item) => ({
-              chipColor: item.color,
-              chipText: item.initials,
-              text: `${item.label} ${item.minutes}分钟`
+              item: item.item,
+              text: `${item.item.label} ${item.minutes}分钟`
             }))
           }
         );
@@ -2408,9 +2425,7 @@ function renderOverview() {
         const dayKey = weekly.dayKeys[hit.index];
         const topItems = weekly.items
           .map((item) => ({
-            label: item.label,
-            initials: getInitials(item),
-            color: item.color,
+            item,
             duration: item.byDay?.[dayKey] || 0
           }))
           .filter((item) => item.duration > 0)
@@ -2425,9 +2440,8 @@ function renderOverview() {
             valueText: formatDuration(weekly.dailyTotals[hit.index].totalMs),
             labelText: formatDayLabel(dayKey),
             rows: topItems.map((item) => ({
-              chipColor: item.color,
-              chipText: item.initials,
-              text: `${item.label} ${formatDuration(item.duration, 'short')}`
+              item: item.item,
+              text: `${item.item.label} ${formatDuration(item.duration, 'short')}`
             }))
           }
         );
