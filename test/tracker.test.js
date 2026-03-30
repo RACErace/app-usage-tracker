@@ -876,12 +876,12 @@ test('browser extension cache preserves SPA routes with query and hash fragments
     browserFamily: 'Chrome',
     extensionVersion: '1.1.1',
     pageTitle: 'Responses API',
-    url: 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming'
+    url: 'https://developers.openai.com/api/docs/guides/streaming-responses#enable-streaming'
   });
 
   const event = cache.getFresh('Chrome');
-  assert.equal(event.url, 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming');
-  assert.equal(event.path, '/docs/guides/responses?mode=spa#streaming');
+  assert.equal(event.url, 'https://developers.openai.com/api/docs/guides/streaming-responses#enable-streaming');
+  assert.equal(event.path, '/api/docs/guides/streaming-responses#enable-streaming');
 });
 
 test('snapshot meta exposes browser extension status for renderer prompts', () => {
@@ -1030,9 +1030,9 @@ test('site detail exposes page-level drill-down aggregated by route', () => {
     browserFamily: 'Chrome',
     pageTitle: 'OpenAI Docs',
     windowTitle: 'OpenAI Docs',
-    url: 'https://platform.openai.com/docs/guides/responses?mode=spa#streaming',
+    url: 'https://developers.openai.com/api/docs/guides/streaming-responses#enable-streaming',
     host: 'openai.com',
-    path: '/docs/guides/responses?mode=spa#streaming',
+    path: '/api/docs/guides/streaming-responses#enable-streaming',
     executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     categoryId: '',
     categoryLabel: '',
@@ -1073,12 +1073,12 @@ test('site detail exposes page-level drill-down aggregated by route', () => {
   assert.equal(detail.pageBreakdown[0].path, '/pricing');
   assert.equal(detail.pageBreakdown[0].totalMs, 60000);
   assert.equal(detail.pageBreakdown[0].lastSeenAt, new Date(2026, 2, 28, 15, 1, 0, 0).getTime());
-  assert.equal(detail.pageBreakdown[1].path, '/docs/guides/responses?mode=spa#streaming');
+  assert.equal(detail.pageBreakdown[1].path, '/api/docs/guides/streaming-responses');
   assert.equal(detail.pageBreakdown[1].totalMs, 180000);
   assert.equal(detail.pageBreakdown[1].todayMs, 180000);
 });
 
-test('site detail merges page-level drill-down entries that only differ by tracking params', () => {
+test('site detail ignores all query params and hash fragments when grouping pages', () => {
   const tracker = new UsageTracker({
     userDataPath: path.join(__dirname, '.tmp-tracker-page-trackers'),
     onDataChanged: null
@@ -1128,16 +1128,25 @@ test('site detail merges page-level drill-down entries that only differ by track
     path: '/video/BV1GhXPBAEpk?trackid=web_related_0.router-related-2479604-5lvcw.1774793187733.228'
   };
 
+  const relatedEntry = {
+    ...videoEntry,
+    pageTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    windowTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    url: 'https://www.bilibili.com/video/BV1GhXPBAEpk/?foo=bar#chapter-1',
+    path: '/video/BV1GhXPBAEpk/?foo=bar#chapter-1'
+  };
+
   tracker.applyDuration(videoEntry, new Date(2026, 2, 30, 16, 54, 0, 0), 60000);
   tracker.applyDuration(revisitEntry, new Date(2026, 2, 30, 16, 55, 0, 0), 30000);
+  tracker.applyDuration(relatedEntry, new Date(2026, 2, 30, 16, 56, 0, 0), 15000);
 
   const detail = tracker.getItemDetail('site:bilibili');
   assert.equal(detail.pageBreakdown.length, 1);
   assert.equal(detail.pageBreakdown[0].path, '/video/BV1GhXPBAEpk');
   assert.equal(detail.pageBreakdown[0].url, 'https://www.bilibili.com/video/BV1GhXPBAEpk');
-  assert.equal(detail.pageBreakdown[0].totalMs, 90000);
-  assert.equal(detail.pageBreakdown[0].todayMs, 90000);
-  assert.equal(detail.pageBreakdown[0].lastSeenAt, new Date(2026, 2, 30, 16, 55, 30, 0).getTime());
+  assert.equal(detail.pageBreakdown[0].totalMs, 105000);
+  assert.equal(detail.pageBreakdown[0].todayMs, 105000);
+  assert.equal(detail.pageBreakdown[0].lastSeenAt, new Date(2026, 2, 30, 16, 56, 15, 0).getTime());
 });
 
 test('usage tracker restores from backup when primary file is structurally invalid', async () => {
