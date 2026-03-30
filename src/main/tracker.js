@@ -449,42 +449,6 @@ function getTrackingPath(url) {
   return sanitizeText(`${pathname}${url.search || ''}${url.hash || ''}`, pathname || '/');
 }
 
-const PAGE_TRACKING_QUERY_PARAM_PREFIXES = ['utm_'];
-const PAGE_TRACKING_QUERY_PARAMS = new Set([
-  'spm_id_from',
-  'vd_source',
-  'from_spmid',
-  'trackid',
-  'search_source',
-  'vt',
-  'keyword',
-  'from_source'
-]);
-
-function shouldStripPageTrackingQueryParam(name) {
-  const normalized = sanitizeText(name).toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  return PAGE_TRACKING_QUERY_PARAMS.has(normalized)
-    || PAGE_TRACKING_QUERY_PARAM_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-}
-
-function stripPageTrackingParams(url) {
-  if (!url) {
-    return null;
-  }
-
-  for (const key of [...url.searchParams.keys()]) {
-    if (shouldStripPageTrackingQueryParam(key)) {
-      url.searchParams.delete(key);
-    }
-  }
-
-  return url;
-}
-
 function normalizePagePathname(pathname) {
   const normalized = sanitizeText(pathname, '/');
   if (normalized === '/') {
@@ -495,13 +459,14 @@ function normalizePagePathname(pathname) {
 }
 
 function normalizePageUrl(url) {
-  const nextUrl = stripPageTrackingParams(url);
-  if (!nextUrl) {
+  if (!url) {
     return null;
   }
 
-  nextUrl.pathname = normalizePagePathname(nextUrl.pathname);
-  return nextUrl;
+  url.pathname = normalizePagePathname(url.pathname);
+  url.search = '';
+  url.hash = '';
+  return url;
 }
 
 function parseTrackingPath(rawPath) {
