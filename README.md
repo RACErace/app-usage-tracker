@@ -55,7 +55,7 @@ It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker i
 |-----------|---------------|
 | Foreground app tracking | Detects the current active window and records usage per desktop app |
 | Website attribution | Attaches tab title, URL, domain, and route data to browser time when the extension is connected |
-| Root-domain aggregation | Groups browsing records by root domain so site stats stay readable |
+| Host-level site grouping | Tracks browsing records by full host by default so subdomains stay separate until you merge them |
 | Page drill-down | Preserves page-level buckets for detail views on tracked websites |
 | Music playback tracking | Combines Windows SMTC and WASAPI audio sessions to count actual playback time |
 

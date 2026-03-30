@@ -11,7 +11,7 @@ const {
 } = require('./customization');
 const { loadJsonFileWithRecovery, writeFileAtomic, writeJsonFileAtomic } = require('./json-storage');
 
-const DATA_VERSION = 5;
+const DATA_VERSION = 6;
 const POLL_INTERVAL_MS = 5000;
 const TIMELINE_SESSION_MERGE_GRACE_MS = POLL_INTERVAL_MS * 4;
 const TIMELINE_SESSION_STITCH_GAP_MS = (5 * 60 * 1000) + TIMELINE_SESSION_MERGE_GRACE_MS;
@@ -498,8 +498,12 @@ function isIpHost(hostname) {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
 }
 
+function normalizeHostname(hostname) {
+  return sanitizeText(hostname).toLowerCase().replace(/\.$/, '');
+}
+
 function getRootDomain(hostname) {
-  const normalized = sanitizeText(hostname).toLowerCase().replace(/\.$/, '');
+  const normalized = normalizeHostname(hostname);
   if (!normalized) {
     return '';
   }
@@ -551,6 +555,31 @@ function getDomainDisplayName(hostname) {
 
   const [firstLabel] = rootDomain.split('.');
   return sanitizeText(firstLabel, rootDomain).toLowerCase();
+}
+
+function getSiteDisplayName(hostname) {
+  const normalizedHost = normalizeHostname(hostname);
+  if (!normalizedHost) {
+    return '网页';
+  }
+
+  if (normalizedHost === 'localhost' || isIpHost(normalizedHost)) {
+    return normalizedHost;
+  }
+
+  const rootDomain = getRootDomain(normalizedHost);
+  if (!rootDomain || normalizedHost === rootDomain) {
+    return getDomainDisplayName(normalizedHost);
+  }
+
+  const subdomain = normalizedHost.endsWith(`.${rootDomain}`)
+    ? normalizedHost.slice(0, -(rootDomain.length + 1))
+    : '';
+  const rootLabel = getDomainDisplayName(rootDomain);
+
+  return subdomain && rootLabel
+    ? `${subdomain} · ${rootLabel}`
+    : normalizedHost;
 }
 
 function normalizeComparableToken(value) {
@@ -758,7 +787,7 @@ function buildDomainMatchers(values) {
 
   for (const value of Array.isArray(values) ? values : []) {
     const normalizedValue = sanitizeText(value);
-    const normalizedDomain = getRootDomain(normalizeUrl(normalizedValue)?.hostname || normalizedValue);
+    const normalizedDomain = normalizeHostname(normalizeUrl(normalizedValue)?.hostname || normalizedValue);
     if (normalizedDomain) {
       domains.add(normalizedDomain);
     }
@@ -823,8 +852,10 @@ const DEFAULT_RULE_CONFIG = createRuleConfig();
 
 function buildEntryMatchContext(entry) {
   const normalizedUrl = normalizeUrl(entry.url || '');
+  const normalizedHost = normalizeHostname(entry.pageHost || entry.host || normalizedUrl?.hostname || '');
   return {
-    rootDomain: getRootDomain(entry.host || normalizedUrl?.hostname || ''),
+    host: normalizedHost,
+    rootDomain: getRootDomain(normalizedHost),
     tokens: new Set([
       normalizeComparableToken(entry.appName),
       normalizeComparableToken(entry.label),
@@ -840,6 +871,10 @@ function buildEntryMatchContext(entry) {
 function matchesCompiledRule(rule, matchContext) {
   if (!rule || !matchContext) {
     return false;
+  }
+
+  if (matchContext.host && rule.domains.includes(matchContext.host)) {
+    return true;
   }
 
   if (matchContext.rootDomain && rule.domains.includes(matchContext.rootDomain)) {
@@ -975,7 +1010,7 @@ class BrowserEventCache {
       url: trackingUrl.toString(),
       host: trackingUrl.hostname,
       rootDomain: getRootDomain(trackingUrl.hostname),
-      displayName: getDomainDisplayName(trackingUrl.hostname),
+      displayName: getSiteDisplayName(trackingUrl.hostname),
       path: getTrackingPath(trackingUrl),
       receivedAt
     });
@@ -1550,25 +1585,24 @@ function hasWebsiteMetadata(item) {
 function buildSiteEntry(item, inferredHost = '') {
   const normalizedUrl = normalizeUrl(item.url || '');
   const trackingUrl = parseTrackingUrl(item.url || '');
-  const rawHost = sanitizeText(inferredHost || item.host || normalizedUrl?.hostname || '');
-  const rootDomain = getRootDomain(rawHost);
-  if (!rootDomain) {
+  const rawHost = normalizeHostname(inferredHost || item.pageHost || normalizedUrl?.hostname || item.host || '');
+  if (!rawHost) {
     return null;
   }
 
-  const key = `site:${hashString(rootDomain)}`;
+  const key = `site:${hashString(rawHost)}`;
   const pageTitle = sanitizeText(item.pageTitle || item.label || item.subtitle || '');
   return {
     key,
     kind: 'site',
-    label: getDomainDisplayName(rootDomain),
-    subtitle: pageTitle || rootDomain,
+    label: getSiteDisplayName(rawHost),
+    subtitle: pageTitle || rawHost,
     appName: sanitizeText(item.appName, item.label || 'Browser'),
     browserFamily: sanitizeText(item.browserFamily, getBrowserFamily(item.appName || item.label || '') || ''),
     pageTitle,
-    windowTitle: sanitizeText(item.windowTitle, pageTitle || item.subtitle || rootDomain),
+    windowTitle: sanitizeText(item.windowTitle, pageTitle || item.subtitle || rawHost),
     url: sanitizeText(item.url),
-    host: rootDomain,
+    host: rawHost,
     path: sanitizeText(item.path, getTrackingPath(trackingUrl || normalizedUrl)),
     executablePath: sanitizeText(item.executablePath),
     totalMs: Number(item.totalMs) || 0,
@@ -2255,9 +2289,11 @@ function inferSiteHostFromTitle(item, siteCandidates) {
   let bestScore = 0;
 
   for (const candidate of siteCandidates) {
-    const rootDomain = sanitizeText(candidate.host).toLowerCase();
-    const displayName = getDomainDisplayName(rootDomain).toLowerCase();
-    const aliases = [rootDomain, displayName, sanitizeText(candidate.label).toLowerCase()].filter(Boolean);
+    const host = normalizeHostname(candidate.host);
+    const rootDomain = getRootDomain(host);
+    const displayName = getSiteDisplayName(host).toLowerCase();
+    const rootDisplayName = getDomainDisplayName(rootDomain).toLowerCase();
+    const aliases = [host, rootDomain, displayName, rootDisplayName, sanitizeText(candidate.label).toLowerCase()].filter(Boolean);
     let score = 0;
 
     for (const alias of aliases) {
@@ -2266,7 +2302,7 @@ function inferSiteHostFromTitle(item, siteCandidates) {
       }
 
       if (title.includes(alias)) {
-        score = Math.max(score, alias === rootDomain ? 3 : 2);
+        score = Math.max(score, alias === host || alias === rootDomain ? 3 : 2);
       }
     }
 
@@ -3030,7 +3066,7 @@ class UsageTracker {
     if (browserFamily) {
       const browserEvent = this.browserEvents.getFresh(browserFamily);
       if (browserEvent) {
-        const groupedDomain = browserEvent.rootDomain || browserEvent.host;
+        const groupedDomain = browserEvent.host || browserEvent.rootDomain;
         const pageKey = `site:${hashString(groupedDomain)}`;
         return canonicalizeEntry({
           key: pageKey,
@@ -3685,6 +3721,7 @@ module.exports = {
   __testables: {
     getDayKey,
     getRootDomain,
+    getSiteDisplayName,
     isAllowedBridgeOrigin,
     isBridgeRequestAuthorized,
     buildMediaSubtitle,

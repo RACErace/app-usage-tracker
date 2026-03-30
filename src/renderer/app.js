@@ -853,7 +853,7 @@ function getBrowserExtensionMessages(status) {
   if (status.status === 'connected' && activeLabel) {
     return {
       summary: `已检测到 ${activeLabel} 插件心跳`,
-      detail: '网页访问会按站点归因到具体域名。',
+      detail: '网页访问会按站点归因到具体主机名，子域名会分开统计。',
       warning: ''
     };
   }
@@ -2031,7 +2031,7 @@ function renderServiceRuleSettings() {
 
     const hint = document.createElement('div');
     hint.className = 'setting-rule-hint';
-    hint.textContent = '应用名和域名都支持用逗号分隔；域名会自动按根域名匹配。';
+    hint.textContent = '应用名和域名都支持用逗号分隔；填 app.slack.com 只匹配该子域名，填 slack.com 会匹配整个站点。';
     card.appendChild(hint);
 
     const actions = document.createElement('div');
@@ -2166,7 +2166,7 @@ function renderCategoryRuleSettings() {
 
     const hint = document.createElement('div');
     hint.className = 'setting-rule-hint';
-    hint.textContent = '先匹配到的分类规则会优先生效；合并后的服务名称也可以直接在这里匹配。';
+    hint.textContent = '先匹配到的分类规则会优先生效；域名支持精确子域名和根域名，合并后的服务名称也可以直接在这里匹配。';
     card.appendChild(hint);
 
     const actions = document.createElement('div');
