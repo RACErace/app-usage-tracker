@@ -85,10 +85,6 @@ const elements = {
   timelineLiveDot: document.getElementById('timeline-live-dot'),
   timelineLiveStatus: document.getElementById('timeline-live-status'),
   timelineBoard: document.getElementById('timeline-board'),
-  settingsBridgeUrlText: document.getElementById('settings-bridge-url-text'),
-  browserExtensionStatusDot: document.getElementById('browser-extension-status-dot'),
-  browserExtensionStatusText: document.getElementById('browser-extension-status-text'),
-  browserExtensionStatusDetail: document.getElementById('browser-extension-status-detail'),
   refreshButton: document.getElementById('refresh-button'),
   backButton: document.getElementById('back-button'),
   detailAvatar: document.getElementById('detail-avatar'),
@@ -826,19 +822,6 @@ function renderBrowserExtensionStatus(snapshot = state.snapshot) {
   if (elements.overviewBridgeDot) {
     elements.overviewBridgeDot.classList.toggle('active', isConnected);
     elements.overviewBridgeDot.classList.toggle('warning', !isConnected);
-  }
-
-  if (elements.browserExtensionStatusDot) {
-    elements.browserExtensionStatusDot.classList.toggle('active', isConnected);
-    elements.browserExtensionStatusDot.classList.toggle('warning', !isConnected);
-  }
-
-  if (elements.browserExtensionStatusText) {
-    elements.browserExtensionStatusText.textContent = messages.summary;
-  }
-
-  if (elements.browserExtensionStatusDetail) {
-    elements.browserExtensionStatusDetail.textContent = messages.detail;
   }
 
   if (elements.overviewBridgeStatus) {
@@ -1838,9 +1821,6 @@ function renderSettingsState() {
   elements.backupStatusDot.classList.toggle('warning', state.backupStatus.tone === 'error');
   elements.backupStatusText.textContent = backupBusyText;
 
-  elements.settingsBridgeUrlText.textContent = snapshot?.meta?.bridgeUrl
-    ? `本地 bridge 地址：${snapshot.meta.bridgeUrl}`
-    : '本地 bridge 地址读取中';
   renderBrowserExtensionStatus(snapshot);
 }
 
