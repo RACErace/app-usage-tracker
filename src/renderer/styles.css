@@ -1069,15 +1069,6 @@ canvas {
   flex-wrap: wrap;
 }
 
-.settings-sidebar {
-  align-self: start;
-}
-
-.settings-help-card {
-  display: grid;
-  gap: 12px;
-}
-
 .close-setting-header {
   margin-bottom: 0;
 }
@@ -1617,13 +1608,8 @@ canvas {
 
   .settings-layout {
     margin-top: 26px;
-    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
-  }
-
-  .settings-sidebar {
-    position: sticky;
-    top: 24px;
   }
 }
 
