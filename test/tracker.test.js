@@ -17,7 +17,7 @@ const {
 
 function createPersistedUsageData(label = 'Notepad') {
   return {
-    version: 5,
+    version: 6,
     days: {
       '2026-03-25': {
         totalMs: 120000,
@@ -93,6 +93,13 @@ test('getRootDomain respects private suffixes and country-code registrable domai
   assert.equal(__testables.getRootDomain('127.0.0.1'), '127.0.0.1');
 });
 
+test('getSiteDisplayName keeps subdomains visible in site labels', () => {
+  assert.equal(__testables.getSiteDisplayName('tieba.baidu.com'), 'tieba · baidu');
+  assert.equal(__testables.getSiteDisplayName('fanyi.baidu.com'), 'fanyi · baidu');
+  assert.equal(__testables.getSiteDisplayName('chatgpt.com'), 'chatgpt');
+  assert.equal(__testables.getSiteDisplayName('localhost'), 'localhost');
+});
+
 test('bridge authorization only accepts extension origins with the shared header', () => {
   assert.equal(__testables.isAllowedBridgeOrigin('chrome-extension://abcdefghijklmnop'), true);
   assert.equal(__testables.isAllowedBridgeOrigin('moz-extension://example-id'), true);
@@ -152,13 +159,49 @@ test('migration keeps private-suffix websites separated instead of collapsing th
   assert.equal(item.label, 'foo');
 });
 
+test('migration rebuilds website items from full subdomains instead of stored root domains', () => {
+  const migrated = migrateUsageData({
+    version: 5,
+    days: {
+      '2026-03-08': {
+        totalMs: 60000,
+        items: {
+          legacy: {
+            key: 'legacy',
+            kind: 'site',
+            label: 'baidu',
+            subtitle: '贴吧',
+            appName: 'Chrome',
+            browserFamily: 'Chrome',
+            pageTitle: '贴吧',
+            windowTitle: '贴吧',
+            url: 'https://tieba.baidu.com/p/123',
+            host: 'baidu.com',
+            pageHost: 'tieba.baidu.com',
+            path: '/p/123',
+            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            totalMs: 60000,
+            hourly: new Array(24).fill(0),
+            color: '#1c8cff',
+            lastSeenAt: 1
+          }
+        }
+      }
+    }
+  });
+
+  const [item] = Object.values(migrated.data.days['2026-03-08'].items);
+  assert.equal(item.host, 'tieba.baidu.com');
+  assert.equal(item.label, 'tieba · baidu');
+});
+
 test('custom service rules merge matching desktop apps and domains into one service', () => {
   const ruleConfig = __testables.createRuleConfig({
     customServiceRules: [{
       id: 'slack-rule',
       serviceName: 'Slack',
       appMatchers: ['Slack', 'slack.exe'],
-      domains: ['slack.com', 'app.slack.com']
+      domains: ['slack.com']
     }],
     categoryRules: [{
       id: 'communication-rule',
@@ -194,7 +237,8 @@ test('custom service rules merge matching desktop apps and domains into one serv
     pageTitle: 'Slack',
     windowTitle: 'Slack',
     url: 'https://app.slack.com/client',
-    host: 'slack.com',
+    host: 'app.slack.com',
+    pageHost: 'app.slack.com',
     path: '/client',
     executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     color: '#222222'
@@ -206,6 +250,57 @@ test('custom service rules merge matching desktop apps and domains into one serv
   assert.equal(siteEntry.kind, 'service');
   assert.equal(appEntry.categoryId, 'communication');
   assert.equal(siteEntry.categoryLabel, '沟通');
+});
+
+test('custom service rules can target one subdomain without merging sibling sites', () => {
+  const ruleConfig = __testables.createRuleConfig({
+    customServiceRules: [{
+      id: 'slack-app-rule',
+      serviceName: 'Slack App',
+      appMatchers: [],
+      domains: ['app.slack.com']
+    }],
+    categoryRules: []
+  });
+
+  const matchedEntry = __testables.canonicalizeEntry({
+    key: 'site:slack-app',
+    kind: 'site',
+    label: 'app · slack',
+    subtitle: 'Workspace',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: 'Slack',
+    windowTitle: 'Slack',
+    url: 'https://app.slack.com/client',
+    host: 'app.slack.com',
+    pageHost: 'app.slack.com',
+    path: '/client',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    color: '#222222'
+  }, ruleConfig);
+
+  const unmatchedEntry = __testables.canonicalizeEntry({
+    key: 'site:slack-docs',
+    kind: 'site',
+    label: 'docs · slack',
+    subtitle: 'Docs',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: 'Docs',
+    windowTitle: 'Docs',
+    url: 'https://docs.slack.com/help',
+    host: 'docs.slack.com',
+    pageHost: 'docs.slack.com',
+    path: '/help',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    color: '#333333'
+  }, ruleConfig);
+
+  assert.equal(matchedEntry.key, 'service:custom:slack-app-rule');
+  assert.equal(matchedEntry.kind, 'service');
+  assert.equal(unmatchedEntry.key, 'site:slack-docs');
+  assert.equal(unmatchedEntry.kind, 'site');
 });
 
 test('migration reapplies custom service and category rules to historical data', () => {
@@ -323,7 +418,7 @@ test('migration reapplies service rules to stored timeline sessions', () => {
   const [session] = migrated.data.days['2026-03-26'].sessions;
   assert.equal(session.key, 'service:custom:slack-rule');
   assert.equal(session.label, 'Slack');
-  assert.equal(session.host, 'slack.com');
+  assert.equal(session.host, 'app.slack.com');
 });
 
 test('timeline merges same-site slices even when page metadata changes', () => {
@@ -848,6 +943,7 @@ test('browser extension cache tracks heartbeat freshness separately from page ev
     });
 
     assert.equal(cache.getFresh('Edge')?.host, 'platform.openai.com');
+    assert.equal(cache.getFresh('Edge')?.displayName, 'platform · openai');
 
     let status = cache.getExtensionStatus();
     assert.equal(status.status, 'connected');
@@ -868,6 +964,33 @@ test('browser extension cache tracks heartbeat freshness separately from page ev
   } finally {
     Date.now = originalNow;
   }
+});
+
+test('browser foreground entries keep subdomains as separate site items', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-browser-hosts'),
+    onDataChanged: null
+  });
+
+  tracker.browserEvents.upsert({
+    browserFamily: 'Edge',
+    extensionVersion: '1.1.1',
+    pageTitle: 'OpenAI Docs',
+    url: 'https://platform.openai.com/docs'
+  });
+
+  const entry = tracker.normalizeWindow({
+    title: 'OpenAI Docs',
+    owner: {
+      name: 'Microsoft Edge',
+      path: 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+    }
+  }, new Date(2026, 2, 28, 11, 0, 0, 0).getTime());
+
+  assert.equal(entry.kind, 'site');
+  assert.equal(entry.host, 'platform.openai.com');
+  assert.equal(entry.pageHost, 'platform.openai.com');
+  assert.equal(entry.label, 'platform · openai');
 });
 
 test('browser extension cache preserves SPA routes with query and hash fragments', () => {
