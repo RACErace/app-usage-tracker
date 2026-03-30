@@ -466,6 +466,11 @@ button {
   padding-bottom: 18px;
 }
 
+.list-card {
+  display: flex;
+  min-height: 0;
+}
+
 .compact-card {
   padding: 18px 20px;
 }
@@ -1620,6 +1625,12 @@ canvas {
   .ranking-section {
     grid-area: ranking;
     margin-top: 0;
+  }
+
+  .ranking-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
   }
 
   .detail-grid {
