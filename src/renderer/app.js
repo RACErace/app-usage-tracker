@@ -24,6 +24,9 @@ const SETTINGS_SECTION_IDS = Object.freeze([
   'backup',
   'display'
 ]);
+const overviewDesktopMediaQuery = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(min-width: 900px)')
+  : null;
 const systemThemeMediaQuery = typeof window.matchMedia === 'function'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null;
@@ -64,6 +67,8 @@ const elements = {
   tabRow: document.getElementById('range-tabs'),
   screenTitle: document.getElementById('screen-title'),
   overviewScreen: document.getElementById('overview-screen'),
+  overviewChartCard: document.querySelector('.chart-section .chart-card'),
+  overviewRankingCard: document.querySelector('.ranking-section .list-card'),
   timelineScreen: document.getElementById('timeline-screen'),
   detailScreen: document.getElementById('detail-screen'),
   settingsScreen: document.getElementById('settings-screen'),
@@ -161,6 +166,8 @@ const elements = {
   settingItemTemplate: document.getElementById('setting-item-template')
 };
 
+let overviewLayoutSyncFrame = 0;
+
 function formatDuration(ms, mode = 'long') {
   const totalMinutes = Math.round((ms || 0) / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -191,6 +198,43 @@ function formatDuration(ms, mode = 'long') {
 
 function normalizeSettingsSection(section) {
   return SETTINGS_SECTION_IDS.includes(section) ? section : SETTINGS_SECTION_IDS[0];
+}
+
+function clearOverviewRankingCardHeight() {
+  if (!elements.overviewRankingCard) {
+    return;
+  }
+
+  elements.overviewRankingCard.style.removeProperty('height');
+}
+
+function syncOverviewRankingCardHeight() {
+  overviewLayoutSyncFrame = 0;
+
+  const chartCard = elements.overviewChartCard;
+  const rankingCard = elements.overviewRankingCard;
+  const isDesktop = overviewDesktopMediaQuery ? overviewDesktopMediaQuery.matches : window.innerWidth >= 900;
+
+  if (!chartCard || !rankingCard || state.activeScreen !== 'overview' || !isDesktop) {
+    clearOverviewRankingCardHeight();
+    return;
+  }
+
+  const chartCardHeight = Math.round(chartCard.getBoundingClientRect().height);
+  if (!chartCardHeight) {
+    clearOverviewRankingCardHeight();
+    return;
+  }
+
+  rankingCard.style.height = `${chartCardHeight}px`;
+}
+
+function queueOverviewRankingCardHeightSync() {
+  if (overviewLayoutSyncFrame) {
+    window.cancelAnimationFrame(overviewLayoutSyncFrame);
+  }
+
+  overviewLayoutSyncFrame = window.requestAnimationFrame(syncOverviewRankingCardHeight);
 }
 
 function padNumber(value) {
@@ -1733,6 +1777,11 @@ function showScreen(screen) {
   updateTopTabs();
   updateHeader();
   updateSettingsSubnav();
+  if (screen === 'overview') {
+    queueOverviewRankingCardHeightSync();
+  } else {
+    clearOverviewRankingCardHeight();
+  }
 }
 
 function renderSettingsState() {
@@ -3230,6 +3279,23 @@ function bindEvents() {
       systemThemeMediaQuery.addEventListener('change', handleSystemThemeChange);
     } else if (typeof systemThemeMediaQuery.addListener === 'function') {
       systemThemeMediaQuery.addListener(handleSystemThemeChange);
+    }
+  }
+
+  if (elements.overviewChartCard && typeof ResizeObserver === 'function') {
+    const chartCardResizeObserver = new ResizeObserver(() => {
+      queueOverviewRankingCardHeightSync();
+    });
+    chartCardResizeObserver.observe(elements.overviewChartCard);
+  }
+
+  window.addEventListener('resize', queueOverviewRankingCardHeightSync);
+
+  if (overviewDesktopMediaQuery) {
+    if (typeof overviewDesktopMediaQuery.addEventListener === 'function') {
+      overviewDesktopMediaQuery.addEventListener('change', queueOverviewRankingCardHeightSync);
+    } else if (typeof overviewDesktopMediaQuery.addListener === 'function') {
+      overviewDesktopMediaQuery.addListener(queueOverviewRankingCardHeightSync);
     }
   }
 }
