@@ -3590,8 +3590,8 @@ class UsageTracker {
     const totalMs = perDay.reduce((sum, day) => sum + day.totalMs, 0);
     const pageBreakdown = [...pageMap.values()]
       .sort((left, right) => (
-        right.totalMs - left.totalMs
-        || (Number(right.lastSeenAt) || 0) - (Number(left.lastSeenAt) || 0)
+        (Number(right.lastSeenAt) || 0) - (Number(left.lastSeenAt) || 0)
+        || right.totalMs - left.totalMs
       ));
 
     return {

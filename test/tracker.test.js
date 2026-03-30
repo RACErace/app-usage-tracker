@@ -1070,11 +1070,12 @@ test('site detail exposes page-level drill-down aggregated by route', () => {
 
   const detail = tracker.getItemDetail('site:openai');
   assert.equal(detail.pageBreakdown.length, 2);
-  assert.equal(detail.pageBreakdown[0].path, '/docs/guides/responses?mode=spa#streaming');
-  assert.equal(detail.pageBreakdown[0].totalMs, 180000);
-  assert.equal(detail.pageBreakdown[0].todayMs, 180000);
-  assert.equal(detail.pageBreakdown[1].path, '/pricing');
-  assert.equal(detail.pageBreakdown[1].totalMs, 60000);
+  assert.equal(detail.pageBreakdown[0].path, '/pricing');
+  assert.equal(detail.pageBreakdown[0].totalMs, 60000);
+  assert.equal(detail.pageBreakdown[0].lastSeenAt, new Date(2026, 2, 28, 15, 1, 0, 0).getTime());
+  assert.equal(detail.pageBreakdown[1].path, '/docs/guides/responses?mode=spa#streaming');
+  assert.equal(detail.pageBreakdown[1].totalMs, 180000);
+  assert.equal(detail.pageBreakdown[1].todayMs, 180000);
 });
 
 test('usage tracker restores from backup when primary file is structurally invalid', async () => {
