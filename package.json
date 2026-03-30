@@ -1,6 +1,6 @@
 {
   "name": "app-usage-tracker",
-  "version": "1.6.10",
+  "version": "1.7.0",
   "description": "Desktop app usage tracker with browser page awareness",
   "main": "src/main/main.js",
   "bin": {
