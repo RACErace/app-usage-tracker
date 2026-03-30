@@ -648,6 +648,9 @@ canvas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: #ffffff;
   font-size: 11px;
   font-weight: 700;
 }
