@@ -674,8 +674,10 @@ canvas {
 
 .ranking-list {
   display: grid;
+  flex: 1 1 auto;
   gap: 14px;
-  max-height: calc(5 * 84px + 4 * 14px);
+  max-height: 30rem;
+  min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
@@ -687,7 +689,6 @@ canvas {
   gap: 14px;
   align-items: center;
   padding: 6px 0;
-  min-height: 84px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -732,22 +733,27 @@ canvas {
 }
 
 .ranking-topline {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 12px;
 }
 
 .ranking-name {
+  min-width: 0;
   font-size: 19px;
   font-weight: 700;
   text-transform: none;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .ranking-duration {
   color: var(--muted);
   font-size: 15px;
   white-space: nowrap;
+  line-height: 1.35;
+  justify-self: end;
 }
 
 .progress-track {
@@ -771,9 +777,12 @@ canvas {
   margin-top: 8px;
   color: var(--muted);
   font-size: 13px;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .chevron {
