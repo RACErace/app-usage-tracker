@@ -1399,7 +1399,60 @@ function getCanvasMetrics(canvas) {
   };
 }
 
-function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }) {
+function roundUpToStep(value, step) {
+  const numericValue = Number(value);
+  const numericStep = Number(step);
+
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return 0;
+  }
+
+  if (!Number.isFinite(numericStep) || numericStep <= 0) {
+    return Math.ceil(numericValue);
+  }
+
+  return Math.ceil(numericValue / numericStep) * numericStep;
+}
+
+function getChartScaleMax(values, minimum = 1, step = 1) {
+  const numericValues = (values || [])
+    .map((value) => Number(value) || 0)
+    .filter((value) => value > 0);
+  const maxValue = numericValues.length ? Math.max(...numericValues) : 0;
+  return Math.max(minimum, roundUpToStep(maxValue, step), 1);
+}
+
+function getAverageChartLabels(scaleMax, averageValue, topLabel) {
+  const labels = [{ value: 0, label: '0' }];
+  const normalizedAverage = Math.max(0, Number(averageValue) || 0);
+
+  if (normalizedAverage > 0 && normalizedAverage < scaleMax) {
+    labels.push({ value: normalizedAverage, label: '平均' });
+  }
+
+  labels.push({ value: scaleMax, label: topLabel });
+  return labels;
+}
+
+function formatChartHoursLabel(value) {
+  const hours = Math.max(0, Number(value) || 0);
+
+  if (!hours) {
+    return '0';
+  }
+
+  const roundedHours = Math.abs(hours - Math.round(hours)) < 0.001
+    ? Math.round(hours)
+    : Math.round(hours * 10) / 10;
+  return `${roundedHours} 小时`;
+}
+
+function formatChartMinutesLabel(value) {
+  const minutes = Math.max(0, Math.round(Number(value) || 0));
+  return minutes ? `${minutes} 分钟` : '0';
+}
+
+function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover, scaleMax }) {
   const context = canvas.getContext('2d');
   const { ratio, width, height } = getCanvasMetrics(canvas);
   const gridColor = getCssColor('--chart-grid', 'rgba(255, 255, 255, 0.08)');
@@ -1407,8 +1460,24 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
   const padding = { top: 14, right: 72, bottom: 30, left: 8 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const maxValue = Math.max(...bars, 1);
-  const step = chartWidth / Math.max(bars.length, 1);
+  const normalizedBars = (bars || []).map((value) => Math.max(0, Number(value) || 0));
+  const resolvedScaleMax = Math.max(Number(scaleMax) || 0, ...normalizedBars, 1);
+  const resolvedYLabels = (yLabels || [])
+    .map((value) => {
+      const numericValue = Number(value?.value);
+      const hasNumericValue = Number.isFinite(numericValue);
+      const resolvedValue = hasNumericValue
+        ? Math.max(0, Math.min(numericValue, resolvedScaleMax))
+        : Math.max(0, Math.min((Number(value?.ratio) || 0) * resolvedScaleMax, resolvedScaleMax));
+
+      return {
+        ...value,
+        value: resolvedValue,
+        ratio: resolvedScaleMax ? resolvedValue / resolvedScaleMax : 0
+      };
+    })
+    .sort((left, right) => left.value - right.value);
+  const step = chartWidth / Math.max(normalizedBars.length, 1);
   const barWidth = Math.min(14, step * 0.52);
   const hitAreas = [];
 
@@ -1420,7 +1489,7 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
 
   context.strokeStyle = gridColor;
   context.lineWidth = 1;
-  yLabels.forEach((value) => {
+  resolvedYLabels.forEach((value) => {
     const y = padding.top + chartHeight * (1 - value.ratio);
     context.beginPath();
     context.moveTo(padding.left, y);
@@ -1431,16 +1500,19 @@ function drawBarChart({ canvas, bars, labels, yLabels, color, tooltip, onHover }
     context.fillText(value.label, width - padding.right + 12, y);
   });
 
-  bars.forEach((value, index) => {
+  normalizedBars.forEach((value, index) => {
     const x = padding.left + step * index + (step - barWidth) / 2;
-    const barHeight = Math.max(4, (value / maxValue) * chartHeight);
+    const scaledBarHeight = (value / resolvedScaleMax) * chartHeight;
+    const barHeight = value > 0 ? Math.max(4, scaledBarHeight) : 0;
     const y = padding.top + chartHeight - barHeight;
     const label = typeof labels === 'function' ? labels(index) : labels[index];
 
-    context.fillStyle = color;
-    context.beginPath();
-    context.roundRect(x, y, barWidth, barHeight, 6);
-    context.fill();
+    if (barHeight > 0) {
+      context.fillStyle = color;
+      context.beginPath();
+      context.roundRect(x, y, barWidth, barHeight, 6);
+      context.fill();
+    }
 
     if (label) {
       context.fillStyle = labelColor;
@@ -2213,15 +2285,17 @@ function renderOverview() {
 
   if (isDaily) {
     const hourly = activeDay.hourly;
+    const hourlyBars = hourly.map((value) => Math.round(value / 60000));
     drawBarChart({
       canvas: elements.chartCanvas,
-      bars: hourly.map((value) => Math.round(value / 60000)),
+      bars: hourlyBars,
       labels: (index) => ({ 0: '0 时', 6: '6 时', 12: '12 时', 18: '18 时' }[index] || ''),
       yLabels: [
-        { ratio: 0, label: '0' },
-        { ratio: 0.5, label: '30 分钟' },
-        { ratio: 1, label: '60 分钟' }
+        { value: 0, label: '0' },
+        { value: 30, label: '30 分钟' },
+        { value: 60, label: '60 分钟' }
       ],
+      scaleMax: 60,
       color: '#1a8dff',
       tooltip: elements.chartTooltip,
       onHover: (hit, rect) => {
@@ -2253,15 +2327,16 @@ function renderOverview() {
       }
     });
   } else {
+    const weeklyBars = weekly.dailyTotals.map((item) => Math.round((item.totalMs / 3600000) * 10) / 10);
+    const weeklyAverageHours = weekly.averageMs / 3600000;
+    const weeklyScaleMax = getChartScaleMax([...weeklyBars, weeklyAverageHours], 12, 2);
+
     drawBarChart({
       canvas: elements.chartCanvas,
-      bars: weekly.dailyTotals.map((item) => Math.round((item.totalMs / 3600000) * 10) / 10),
+      bars: weeklyBars,
       labels: weekly.dayKeys.map((dayKey) => weekdayLabel(dayKey)),
-      yLabels: [
-        { ratio: 0, label: '0' },
-        { ratio: 0.66, label: '平均' },
-        { ratio: 1, label: '12 小时' }
-      ],
+      yLabels: getAverageChartLabels(weeklyScaleMax, weeklyAverageHours, formatChartHoursLabel(weeklyScaleMax)),
+      scaleMax: weeklyScaleMax,
       color: '#1a8dff',
       tooltip: elements.chartTooltip,
       onHover: (hit, rect) => {
@@ -2422,15 +2497,17 @@ function renderDetail() {
 
   renderPageDrilldown(detail);
 
+  const detailDayBars = detail.todayHourly.map((value) => Math.round(value / 60000));
   drawBarChart({
     canvas: elements.detailDayChart,
-    bars: detail.todayHourly.map((value) => Math.round(value / 60000)),
+    bars: detailDayBars,
     labels: (index) => ({ 0: '0', 6: '6', 12: '12', 18: '18' }[index] || ''),
     yLabels: [
-      { ratio: 0, label: '0' },
-      { ratio: 0.5, label: '30 分钟' },
-      { ratio: 1, label: '60 分钟' }
+      { value: 0, label: '0' },
+      { value: 30, label: '30 分钟' },
+      { value: 60, label: '60 分钟' }
     ],
+    scaleMax: 60,
     color: detail.color,
     tooltip: elements.detailDayTooltip,
     onHover: (hit, rect) => {
@@ -2446,15 +2523,16 @@ function renderDetail() {
     }
   });
 
+  const detailWeekBars = detail.lastSevenDays.map((item) => Math.round(item.totalMs / 60000));
+  const detailWeekAverageMinutes = detail.averageMs / 60000;
+  const detailWeekScaleMax = getChartScaleMax([...detailWeekBars, detailWeekAverageMinutes], 120, 30);
+
   drawBarChart({
     canvas: elements.detailWeekChart,
-    bars: detail.lastSevenDays.map((item) => Math.round(item.totalMs / 60000)),
+    bars: detailWeekBars,
     labels: detail.lastSevenDays.map((item) => weekdayLabel(item.dayKey)),
-    yLabels: [
-      { ratio: 0, label: '0' },
-      { ratio: 0.5, label: '平均' },
-      { ratio: 1, label: '120 分钟' }
-    ],
+    yLabels: getAverageChartLabels(detailWeekScaleMax, detailWeekAverageMinutes, formatChartMinutesLabel(detailWeekScaleMax)),
+    scaleMax: detailWeekScaleMax,
     color: detail.color,
     tooltip: elements.detailWeekTooltip,
     onHover: (hit, rect) => {
