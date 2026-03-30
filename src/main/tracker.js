@@ -449,6 +449,86 @@ function getTrackingPath(url) {
   return sanitizeText(`${pathname}${url.search || ''}${url.hash || ''}`, pathname || '/');
 }
 
+const PAGE_TRACKING_QUERY_PARAM_PREFIXES = ['utm_'];
+const PAGE_TRACKING_QUERY_PARAMS = new Set([
+  'spm_id_from',
+  'vd_source',
+  'from_spmid',
+  'trackid',
+  'search_source',
+  'vt',
+  'keyword',
+  'from_source'
+]);
+
+function shouldStripPageTrackingQueryParam(name) {
+  const normalized = sanitizeText(name).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return PAGE_TRACKING_QUERY_PARAMS.has(normalized)
+    || PAGE_TRACKING_QUERY_PARAM_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function stripPageTrackingParams(url) {
+  if (!url) {
+    return null;
+  }
+
+  for (const key of [...url.searchParams.keys()]) {
+    if (shouldStripPageTrackingQueryParam(key)) {
+      url.searchParams.delete(key);
+    }
+  }
+
+  return url;
+}
+
+function normalizePagePathname(pathname) {
+  const normalized = sanitizeText(pathname, '/');
+  if (normalized === '/') {
+    return '/';
+  }
+
+  return normalized.replace(/\/+$/, '') || '/';
+}
+
+function normalizePageUrl(url) {
+  const nextUrl = stripPageTrackingParams(url);
+  if (!nextUrl) {
+    return null;
+  }
+
+  nextUrl.pathname = normalizePagePathname(nextUrl.pathname);
+  return nextUrl;
+}
+
+function parseTrackingPath(rawPath) {
+  const normalizedPath = sanitizeText(rawPath, '/');
+  try {
+    return new URL(normalizedPath, 'https://tracker.local');
+  } catch {
+    return null;
+  }
+}
+
+function normalizePageLocation({ url = '', path = '/' } = {}) {
+  const normalizedUrl = normalizePageUrl(parseTrackingUrl(url));
+  if (normalizedUrl) {
+    return {
+      url: normalizedUrl.toString(),
+      path: getTrackingPath(normalizedUrl)
+    };
+  }
+
+  const normalizedPathUrl = normalizePageUrl(parseTrackingPath(path));
+  return {
+    url: sanitizeText(url),
+    path: normalizedPathUrl ? getTrackingPath(normalizedPathUrl) : sanitizeText(path, '/')
+  };
+}
+
 function isIpHost(hostname) {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
 }
@@ -1101,7 +1181,11 @@ function buildPageBucketKey(host, path) {
 function createPageBucketFromEntry(entry) {
   const trackingUrl = parseTrackingUrl(entry?.url || '');
   const host = sanitizeText(entry?.pageHost || trackingUrl?.hostname || entry?.host).toLowerCase();
-  const path = sanitizeText(entry?.path, getTrackingPath(trackingUrl));
+  const location = normalizePageLocation({
+    url: entry?.url || '',
+    path: sanitizeText(entry?.path, getTrackingPath(trackingUrl))
+  });
+  const path = location.path;
   const key = buildPageBucketKey(host, path);
   if (!key) {
     return null;
@@ -1112,7 +1196,7 @@ function createPageBucketFromEntry(entry) {
     key,
     label: sanitizeText(pageTitle, path),
     pageTitle,
-    url: sanitizeText(entry?.url),
+    url: location.url,
     host,
     path,
     totalMs: 0,
@@ -1121,8 +1205,13 @@ function createPageBucketFromEntry(entry) {
   };
 }
 
-function cloneStoredPageBucket(page) {
-  const key = sanitizeText(page?.key);
+function cloneStoredPageBucket(page, fallbackKey = '') {
+  const host = sanitizeText(page?.host).toLowerCase();
+  const location = normalizePageLocation({
+    url: page?.url,
+    path: page?.path
+  });
+  const key = buildPageBucketKey(host, location.path) || sanitizeText(page?.key, fallbackKey);
   if (!key) {
     return null;
   }
@@ -1131,9 +1220,9 @@ function cloneStoredPageBucket(page) {
     key,
     label: sanitizeText(page?.label, page?.pageTitle || page?.path || page?.host || key),
     pageTitle: sanitizeText(page?.pageTitle, page?.label || page?.path || ''),
-    url: sanitizeText(page?.url),
-    host: sanitizeText(page?.host).toLowerCase(),
-    path: sanitizeText(page?.path, '/'),
+    url: location.url,
+    host,
+    path: location.path,
     totalMs: Number(page?.totalMs) || 0,
     hourly: ensureArray24(page?.hourly),
     lastSeenAt: Number(page?.lastSeenAt) || 0
@@ -1147,9 +1236,13 @@ function cloneStoredPageBuckets(source) {
 
   const result = {};
   for (const [pageKey, page] of Object.entries(source)) {
-    const normalized = cloneStoredPageBucket({ ...page, key: sanitizeText(page?.key, pageKey) });
+    const normalized = cloneStoredPageBucket(page, pageKey);
     if (normalized) {
-      result[normalized.key] = normalized;
+      if (!result[normalized.key]) {
+        result[normalized.key] = normalized;
+      } else {
+        mergeStoredPageBucket(result[normalized.key], normalized);
+      }
     }
   }
 

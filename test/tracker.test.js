@@ -1078,6 +1078,68 @@ test('site detail exposes page-level drill-down aggregated by route', () => {
   assert.equal(detail.pageBreakdown[1].todayMs, 180000);
 });
 
+test('site detail merges page-level drill-down entries that only differ by tracking params', () => {
+  const tracker = new UsageTracker({
+    userDataPath: path.join(__dirname, '.tmp-tracker-page-trackers'),
+    onDataChanged: null
+  });
+
+  const videoEntry = {
+    key: 'site:bilibili',
+    kind: 'site',
+    label: 'bilibili',
+    subtitle: '国产跑车都是垃圾吗？',
+    appName: 'Chrome',
+    browserFamily: 'Chrome',
+    pageTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    windowTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    url: 'https://www.bilibili.com/video/BV1GhXPBAEpk/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=d4a1b6f4223a05d848273106618194e9',
+    host: 'bilibili.com',
+    path: '/video/BV1GhXPBAEpk/?spm_id_from=333.1007.tianma.1-1-1.click&vd_source=d4a1b6f4223a05d848273106618194e9',
+    executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    categoryId: '',
+    categoryLabel: '',
+    trackingMode: 'foreground',
+    trackingSource: 'foreground',
+    sourceAppUserModelId: '',
+    mediaTitle: '',
+    mediaArtist: '',
+    mediaAlbumTitle: '',
+    playbackStatus: '',
+    playbackType: '',
+    processId: 0,
+    processName: '',
+    audioSessionState: '',
+    audioPeakValue: 0,
+    audioIsMuted: false,
+    audioEndpointId: '',
+    audioSessionIdentifier: '',
+    audioSessionInstanceIdentifier: '',
+    color: '#1c8cff',
+    startedAt: new Date(2026, 2, 30, 16, 54, 0, 0).getTime(),
+    lastSeenAt: new Date(2026, 2, 30, 16, 54, 0, 0).getTime()
+  };
+
+  const revisitEntry = {
+    ...videoEntry,
+    pageTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    windowTitle: '国产跑车都是垃圾吗？_哔哩哔哩_bilibili',
+    url: 'https://www.bilibili.com/video/BV1GhXPBAEpk?trackid=web_related_0.router-related-2479604-5lvcw.1774793187733.228',
+    path: '/video/BV1GhXPBAEpk?trackid=web_related_0.router-related-2479604-5lvcw.1774793187733.228'
+  };
+
+  tracker.applyDuration(videoEntry, new Date(2026, 2, 30, 16, 54, 0, 0), 60000);
+  tracker.applyDuration(revisitEntry, new Date(2026, 2, 30, 16, 55, 0, 0), 30000);
+
+  const detail = tracker.getItemDetail('site:bilibili');
+  assert.equal(detail.pageBreakdown.length, 1);
+  assert.equal(detail.pageBreakdown[0].path, '/video/BV1GhXPBAEpk');
+  assert.equal(detail.pageBreakdown[0].url, 'https://www.bilibili.com/video/BV1GhXPBAEpk');
+  assert.equal(detail.pageBreakdown[0].totalMs, 90000);
+  assert.equal(detail.pageBreakdown[0].todayMs, 90000);
+  assert.equal(detail.pageBreakdown[0].lastSeenAt, new Date(2026, 2, 30, 16, 55, 30, 0).getTime());
+});
+
 test('usage tracker restores from backup when primary file is structurally invalid', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'usage-tracker-recover-'));
   const dataFilePath = path.join(tempDir, 'usage-data.json');
