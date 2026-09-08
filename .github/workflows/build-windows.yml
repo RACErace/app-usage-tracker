@@ -95,7 +95,7 @@ jobs:
           "skills_zip_path=dist/$skillsZipTarget" >> $env:GITHUB_OUTPUT
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: app-usage-tracker-${{ steps.version.outputs.version }}-windows
           path: |
