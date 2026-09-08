@@ -51,11 +51,6 @@
   },
   "devDependencies": {
     "electron": "^35.0.0",
-    "electron-builder": "^25.1.8"
-  },
-  "overrides": {
-    "@electron/rebuild": {
-      "node-gyp": "^12.2.0"
-    }
+    "electron-builder": "^26.16.1"
   }
 }
