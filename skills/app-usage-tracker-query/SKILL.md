@@ -1,6 +1,6 @@
 ---
 name: app-usage-tracker-query
-description: Query local App Usage Tracker history through the bundled CLI. Use when an AI agent needs to inspect available tracking dates, fetch top apps or sites for a day or the recent week, replay a day's real session timeline, search historical items by name/host/URL, or retrieve detailed usage history for a specific tracked item from this repository's usage data file.
+description: Query local App Usage Tracker history through the bundled CLI. Use when an AI agent needs to inspect available tracking dates, fetch top apps or sites for a day or the recent week, replay a day's real session timeline, search historical items by name/host/URL, retrieve detailed usage history for a specific tracked item, or generate a Markdown/CSV usage report from this repository's usage data file.
 ---
 
 # App Usage Tracker Query
@@ -30,6 +30,7 @@ node src/cli/query.js <command> ...
 3. Run `timeline --day <day>` when you need real session chronology with start/end times for one tracked day.
 4. Run `search --query "<name>"` before requesting item details if the item key is unknown.
 5. Run `detail --key "<itemKey>"` once you have the exact key.
+6. Run `report` when the user wants a human-readable weekly digest, a shareable Markdown document, or a CSV export.
 
 Do not guess hashed item keys. Use `search` to resolve them first.
 
@@ -105,6 +106,24 @@ Read the full serialized snapshot:
 app-usage-tracker-cli snapshot --format json
 ```
 
+Generate a Markdown usage report for the last 7 days:
+
+```powershell
+app-usage-tracker-cli report --days 7 --format markdown
+```
+
+Export the daily totals of the last 7 days as CSV:
+
+```powershell
+app-usage-tracker-cli report --days 7 --format csv
+```
+
+Write the Markdown report to a file instead of stdout:
+
+```powershell
+app-usage-tracker-cli report --days 7 --format markdown --output weekly-report.md
+```
+
 ## Storage Overrides
 
 If the data file is not in the default location, prefer explicit overrides in this order:
@@ -119,7 +138,9 @@ On Windows, the default data file is `%APPDATA%/app-usage-tracker/usage-data.jso
 ## Notes
 
 - The CLI reads the on-disk `usage-data.json`; the newest few seconds of live activity may not appear until the desktop app saves.
-- The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, timelines, searches, and snapshots.
+- The CLI respects `settings.json` visibility rules, so hidden items are excluded from totals, rankings, timelines, searches, snapshots, and reports.
+- `report` aggregates the last N days (default 7). Its default output is a Markdown document with daily totals, top items, activity split, categories, music playback, hourly activity, and insights; `--format csv` exports daily totals instead.
+- `report --output <path>` writes the document to a file, which is convenient for sharing with the user.
 - `timeline` returns session chronology for a day. It may merge nearby segments for the same app or site, so use `detail` when you need exact page-level website detail.
 - `detail` returns item history and includes `pageBreakdown` for website items.
 - Older aggregated-only days may report totals but no session list.

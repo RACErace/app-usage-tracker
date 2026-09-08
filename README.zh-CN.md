@@ -67,7 +67,7 @@ App Usage Tracker 会记录 Windows 当前前台应用、浏览器活动站点�
 | 近 7 天趋势 | 聚合最近 7 天数据，展示总量、均值和主要项目变化 |
 | 时间线视图 | 按真实开始/结束时间回放某一天的会话，并展示并行重叠的前台/播放片段 |
 | 项目详情页 | 查看今日按小时分布、近 7 天历史、元数据，以及站点页面明细 |
-| 本地 CLI | 直接查询日期、排行、时间线、搜索、详情和完整 snapshot |
+| 本地 CLI | 直接查询日期、排行、时间线、搜索、详情、完整 snapshot，并生成 Markdown/CSV 使用报告 |
 | AI Skill 文件 | 提供可直接接入 Codex、OpenClaw 等工具的 skill |
 
 ### 控制与可靠性
@@ -76,7 +76,7 @@ App Usage Tracker 会记录 Windows 当前前台应用、浏览器活动站点�
 |------|------|
 | 服务合并规则 | 把桌面应用和网站域名合并为一个逻辑服务 |
 | 分类规则 | 给项目打上工作 / 娱乐 / 学习 / 沟通等标签 |
-| 显示控制 | 可隐藏项目，使其不参与总时长、排行、时间线、搜索和 snapshot |
+| 显示控制 | 可隐藏项目，使其不参与总时长、排行、时间线、搜索、snapshot 和报告 |
 | 统计保护 | 支持手动暂停、空闲暂停与锁屏暂停 |
 | 桌面行为 | 支持系统托盘、开机自启动、关闭行为和浅色 / 深色 / 跟随系统主题 |
 | 备份与恢复 | 支持导出 / 导入 JSON 备份，并可定时自动备份到本地 |
@@ -202,6 +202,8 @@ npm run query -- timeline --day latest --limit 20 --format json
 npm run query -- search --query "ChatGPT" --format json
 npm run query -- detail --key service:chatgpt --format json
 npm run query -- snapshot --format json
+npm run query -- report --days 7 --format markdown
+npm run query -- report --days 7 --format csv
 ```
 
 安装版中可直接执行：
@@ -215,8 +217,9 @@ app-usage-tracker-cli days --format json
 - 安装程序会把安装目录加入当前用户的 `PATH`
 - 如果安装前终端已经打开，请重新打开 PowerShell、CMD 或 Windows Terminal
 - 安装后的包装脚本位于 `%LOCALAPPDATA%\Programs\app-usage-tracker\app-usage-tracker-cli.cmd`
-- CLI 会遵循 `settings.json` 中的显示设置，隐藏项目不会出现在总时长、排行、时间线、搜索和 snapshot 中
+- CLI 会遵循 `settings.json` 中的显示设置，隐藏项目不会出现在总时长、排行、时间线、搜索、snapshot 和报告（report）中
 - `timeline` 会优先返回真实存储的会话明细；对于在“会话时间线”能力上线前采集的旧日期，可能只能拿到聚合总量
+- `report` 会把最近 N 天（默认 7 天）汇总为一份 Markdown 周报——每日总时长、Top 榜单、活动类型占比、分类、音乐播放、分时活跃图和洞察，也可用 `--format csv` 导出每日汇总 CSV
 - 对脚本、自动化和 AI 调用场景，建议优先使用 `--format json`
 
 支持的数据路径覆盖方式：

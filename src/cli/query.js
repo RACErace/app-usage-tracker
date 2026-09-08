@@ -538,6 +538,19 @@ function parseLimit(value, fallback = 10) {
   return limit;
 }
 
+function parsePositiveInteger(value, optionName, fallback) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new CliError(`Invalid value "${value}" for ${optionName}. Use a positive integer.`);
+  }
+
+  return parsed;
+}
+
 function resolveDayKey(snapshot, requestedDayKey) {
   if (!requestedDayKey || requestedDayKey === 'latest') {
     return snapshot?.meta?.latestDayKey || null;
@@ -582,6 +595,7 @@ function printHelp() {
     '  node src/cli/query.js search --query <text> [--limit N] [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js detail (--key <itemKey> | --query <text>) [--format json|text] [--data-file <path>]',
     '  node src/cli/query.js snapshot [--format json|text] [--data-file <path>]',
+    '  node src/cli/query.js report [--days N] [--format markdown|json|csv] [--output <path>] [--data-file <path>]',
     '',
     'Storage resolution:',
     '  1. --data-file',
@@ -594,7 +608,8 @@ function printHelp() {
     '  npm run query -- top --range day --day latest --limit 5 --format json',
     '  npm run query -- timeline --day latest --limit 20 --format json',
     '  npm run query -- search --query "ChatGPT" --format json',
-    '  npm run query -- detail --key service:chatgpt --format json'
+    '  npm run query -- detail --key service:chatgpt --format json',
+    '  npm run query -- report --days 7 --format markdown'
   ].join('\n'));
 }
 
@@ -948,6 +963,327 @@ async function runSnapshot(args) {
   process.stdout.write(lines.join('\n'));
 }
 
+function resolveReportFormat(values) {
+  if (values.json) {
+    return 'json';
+  }
+
+  const format = values.format || 'markdown';
+  if (format === 'markdown' || format === 'text') {
+    return 'markdown';
+  }
+
+  if (format === 'json') {
+    return 'json';
+  }
+
+  if (format === 'csv') {
+    return 'csv';
+  }
+
+  throw new CliError(`Unsupported format "${format}" for report. Use "markdown", "json" or "csv".`);
+}
+
+function percentShare(valueMs, totalMs) {
+  if (!totalMs) {
+    return 0;
+  }
+
+  return Number(((Number(valueMs) || 0) / totalMs * 100).toFixed(1));
+}
+
+function getReportDayKeys(snapshot, dayCount) {
+  const availableDays = [...(snapshot?.daily?.availableDays || [])].sort();
+  return availableDays.slice(-dayCount);
+}
+
+function isPlaybackItem(item) {
+  return item?.trackingMode === 'playback' || item?.kind === 'playback';
+}
+
+function buildReport(snapshot, dayKeys) {
+  const days = snapshot?.daily?.days || {};
+  const itemMap = new Map();
+  const hourlyTotals = new Array(24).fill(0);
+  const dailyTotals = [];
+  let totalMs = 0;
+  let activeDayCount = 0;
+
+  for (const dayKey of dayKeys) {
+    const items = (days?.[dayKey]?.items || []).filter(Boolean);
+    const dayTotalMs = items.reduce((sum, item) => sum + (Number(item.totalMs) || 0), 0);
+    if (dayTotalMs > 0) {
+      activeDayCount += 1;
+    }
+    totalMs += dayTotalMs;
+
+    let topItemKey = null;
+    let topItemMs = 0;
+
+    for (const item of items) {
+      const itemTotalMs = Number(item.totalMs) || 0;
+      const existing = itemMap.get(item.key);
+      if (!existing) {
+        itemMap.set(item.key, { ...item, totalMs: itemTotalMs, byDay: { [dayKey]: itemTotalMs } });
+      } else {
+        existing.totalMs += itemTotalMs;
+        existing.byDay[dayKey] = itemTotalMs;
+      }
+
+      if (itemTotalMs > topItemMs) {
+        topItemMs = itemTotalMs;
+        topItemKey = item.key;
+      }
+
+      (item.hourly || []).forEach((value, index) => {
+        hourlyTotals[index] += Number(value) || 0;
+      });
+    }
+
+    dailyTotals.push({
+      dayKey,
+      totalMs: dayTotalMs,
+      totalMinutes: toMinutes(dayTotalMs),
+      itemCount: items.length,
+      topItemKey,
+      topItemLabel: topItemKey ? (itemMap.get(topItemKey)?.label || '') : '',
+      topItemMs
+    });
+  }
+
+  const items = [...itemMap.values()].sort((left, right) => right.totalMs - left.totalMs);
+  const kindSplit = { app: 0, site: 0, service: 0, playback: 0, other: 0 };
+  const categoryMap = new Map();
+
+  for (const item of items) {
+    if (isPlaybackItem(item)) {
+      kindSplit.playback += item.totalMs;
+    } else if (item.kind === 'app') {
+      kindSplit.app += item.totalMs;
+    } else if (item.kind === 'site') {
+      kindSplit.site += item.totalMs;
+    } else if (item.kind === 'service') {
+      kindSplit.service += item.totalMs;
+    } else {
+      kindSplit.other += item.totalMs;
+    }
+
+    const categoryLabel = item.categoryLabel || 'Uncategorized';
+    const existingCategory = categoryMap.get(categoryLabel);
+    if (!existingCategory) {
+      categoryMap.set(categoryLabel, {
+        categoryId: item.categoryId || '',
+        categoryLabel,
+        totalMs: item.totalMs
+      });
+    } else {
+      existingCategory.totalMs += item.totalMs;
+    }
+  }
+
+  const categories = [...categoryMap.values()].sort((left, right) => right.totalMs - left.totalMs);
+  const busiestDay = dailyTotals.reduce(
+    (best, day) => (day.totalMs > best.totalMs ? day : best),
+    { dayKey: null, totalMs: -1 }
+  );
+  const maxHourlyMs = Math.max(...hourlyTotals);
+  const averageMs = dayKeys.length ? Math.round(totalMs / dayKeys.length) : 0;
+
+  return {
+    dayKeys,
+    totalMs,
+    totalMinutes: toMinutes(totalMs),
+    averageMs,
+    averageMinutes: toMinutes(averageMs),
+    activeDayCount,
+    busiestDayKey: busiestDay.totalMs > 0 ? busiestDay.dayKey : null,
+    busiestHour: maxHourlyMs > 0 ? hourlyTotals.indexOf(maxHourlyMs) : null,
+    hourlyTotals,
+    hourlyAverageMinutes: hourlyTotals.map((value) => toMinutes(Math.round(value / Math.max(dayKeys.length, 1)))),
+    dailyTotals,
+    topItems: items.slice(0, 10).map((item) => ({
+      ...summarizeItem(item),
+      share: percentShare(item.totalMs, totalMs),
+      activeDayCount: Object.keys(item.byDay || {}).length
+    })),
+    playbackItems: items.filter(isPlaybackItem).slice(0, 10).map((item) => ({
+      ...summarizeItem(item),
+      share: percentShare(item.totalMs, totalMs)
+    })),
+    categories: categories.map((category) => ({
+      ...category,
+      totalMinutes: toMinutes(category.totalMs),
+      share: percentShare(category.totalMs, totalMs)
+    })),
+    kindSplit: Object.fromEntries(
+      Object.entries(kindSplit).map(([kind, valueMs]) => [kind, {
+        totalMs: valueMs,
+        totalMinutes: toMinutes(valueMs),
+        share: percentShare(valueMs, totalMs)
+      }])
+    )
+  };
+}
+
+function escapeMarkdownCell(value) {
+  return String(value).replace(/\|/g, '\\|');
+}
+
+function formatPercent(value) {
+  return `${value}%`;
+}
+
+function renderMarkdownReport(payload) {
+  const lines = [];
+  const rangeLabel = payload.dayKeys.length
+    ? (payload.dayKeys.length === 1
+      ? payload.dayKeys[0]
+      : `${payload.dayKeys[0]} to ${payload.dayKeys[payload.dayKeys.length - 1]}`)
+    : 'no data';
+
+  lines.push(`# Usage Report: ${rangeLabel}`, '');
+
+  if (!payload.dayKeys.length) {
+    lines.push('No tracking data available.');
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `- Total: ${formatDuration(payload.totalMs)} | Daily average: ${formatDuration(payload.averageMs)}`,
+    `- Active days: ${payload.activeDayCount}/${payload.dayKeys.length} | Busiest day: ${payload.busiestDayKey || '-'}`
+  );
+
+  lines.push('', '## Daily Totals', '', '| Day | Total | Items | Top item |', '| --- | --- | --- | --- |');
+  for (const day of payload.dailyTotals) {
+    lines.push(`| ${day.dayKey} | ${formatDuration(day.totalMs)} | ${day.itemCount} | ${escapeMarkdownCell(day.topItemLabel || '-')} |`);
+  }
+
+  lines.push('', '## Top Items', '', '| # | Item | Kind | Time | Share | Days |', '| --- | --- | --- | --- | --- | --- |');
+  payload.topItems.forEach((item, index) => {
+    lines.push(`| ${index + 1} | ${escapeMarkdownCell(item.label)} | ${item.kind} | ${formatDuration(item.totalMs)} | ${formatPercent(item.share)} | ${item.activeDayCount} |`);
+  });
+
+  const splitRows = Object.entries(payload.kindSplit).filter(([, value]) => value.totalMs > 0);
+  if (splitRows.length) {
+    lines.push('', '## Activity Split', '', '| Kind | Time | Share |', '| --- | --- | --- |');
+    for (const [kind, value] of splitRows) {
+      lines.push(`| ${kind} | ${formatDuration(value.totalMs)} | ${formatPercent(value.share)} |`);
+    }
+  }
+
+  lines.push('', '## Categories', '', '| Category | Time | Share |', '| --- | --- | --- |');
+  for (const category of payload.categories) {
+    lines.push(`| ${escapeMarkdownCell(category.categoryLabel)} | ${formatDuration(category.totalMs)} | ${formatPercent(category.share)} |`);
+  }
+
+  if (payload.playbackItems.length) {
+    lines.push('', '## Music Playback', '', '| Title | Artist | Time |', '| --- | --- | --- |');
+    for (const item of payload.playbackItems) {
+      lines.push(`| ${escapeMarkdownCell(item.mediaTitle || item.label)} | ${escapeMarkdownCell(item.mediaArtist || '-')} | ${formatDuration(item.totalMs)} |`);
+    }
+  }
+
+  lines.push('', '## Hourly Activity', '', '```');
+  const maxHourlyMinutes = Math.max(...payload.hourlyAverageMinutes, 1);
+  for (let hour = 0; hour < 24; hour += 1) {
+    const minutes = payload.hourlyAverageMinutes[hour];
+    const barLength = minutes > 0 ? Math.max(1, Math.round((minutes / maxHourlyMinutes) * 24)) : 0;
+    const bar = minutes > 0 ? `${formatDuration(minutes * 60000)} ${'#'.repeat(barLength)}` : '';
+    lines.push(`${String(hour).padStart(2, '0')}:00 ${bar}`.trimEnd());
+  }
+  lines.push('```');
+
+  lines.push('', '## Insights', '');
+  if (payload.topItems.length) {
+    const top = payload.topItems[0];
+    lines.push(`- Top item: ${top.label} (${formatDuration(top.totalMs)}, ${formatPercent(top.share)}).`);
+  }
+  if (payload.busiestHour !== null) {
+    lines.push(`- Peak hour: ${String(payload.busiestHour).padStart(2, '0')}:00 (${formatDuration(payload.hourlyAverageMinutes[payload.busiestHour] * 60000)} per day on average).`);
+  }
+  if (payload.kindSplit.playback.totalMs > 0) {
+    lines.push(`- Music playback took ${formatDuration(payload.kindSplit.playback.totalMs)} (${formatPercent(payload.kindSplit.playback.share)}).`);
+  }
+  if (payload.dailyTotals.length >= 2) {
+    const last = payload.dailyTotals[payload.dailyTotals.length - 1];
+    const previous = payload.dailyTotals[payload.dailyTotals.length - 2];
+    if (previous.totalMs > 0) {
+      const delta = Math.round((last.totalMs - previous.totalMs) / previous.totalMs * 100);
+      lines.push(`- Trend: ${delta >= 0 ? '+' : ''}${delta}% vs the previous day.`);
+    } else if (last.totalMs > 0) {
+      lines.push('- Trend: activity started after a zero day.');
+    } else {
+      lines.push('- Trend: no change (both days recorded no time).');
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function escapeCsvCell(value) {
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function renderCsvReport(payload) {
+  const rows = [['day', 'total_minutes', 'item_count', 'top_item', 'top_item_minutes']];
+  for (const day of payload.dailyTotals) {
+    rows.push([
+      day.dayKey,
+      day.totalMinutes,
+      day.itemCount,
+      day.topItemLabel || '',
+      toMinutes(day.topItemMs)
+    ]);
+  }
+
+  return `${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\n')}\n`;
+}
+
+async function runReport(args) {
+  const { values } = parseCommandArgs(args, {
+    days: { type: 'string' },
+    output: { type: 'string' }
+  });
+
+  if (values.help) {
+    printHelp();
+    return;
+  }
+
+  const format = resolveReportFormat(values);
+  const dayCount = parsePositiveInteger(values.days, '--days', 7);
+  const { paths, snapshot } = await loadTracker(values);
+  const dayKeys = getReportDayKeys(snapshot, dayCount);
+  const payload = {
+    kind: 'report',
+    dataFilePath: paths.dataFilePath,
+    ...buildReport(snapshot, dayKeys)
+  };
+
+  let output;
+  if (format === 'json') {
+    output = toJsonOutput(payload);
+  } else if (format === 'csv') {
+    output = renderCsvReport(payload);
+  } else {
+    output = renderMarkdownReport(payload);
+  }
+
+  if (values.output) {
+    const outputPath = path.resolve(values.output);
+    try {
+      await fs.writeFile(outputPath, output, 'utf8');
+    } catch (error) {
+      throw new CliError(`Failed to write report to "${values.output}": ${error.message}`);
+    }
+    process.stdout.write(`Report written to ${outputPath}\n`);
+    return;
+  }
+
+  process.stdout.write(output);
+}
+
 async function main(argv = process.argv.slice(2)) {
   const [command = 'help', ...args] = argv;
 
@@ -975,6 +1311,9 @@ async function main(argv = process.argv.slice(2)) {
     case 'snapshot':
       await runSnapshot(args);
       return;
+    case 'report':
+      await runReport(args);
+      return;
     default:
       throw new CliError(`Unknown command "${command}". Run "node src/cli/query.js help" for usage.`);
   }
@@ -990,10 +1329,13 @@ if (require.main === module) {
 
 module.exports = {
   buildCatalog,
+  buildReport,
   filterSnapshot,
   getSearchScore,
   main,
   normalizeHiddenItemKeys,
+  renderCsvReport,
+  renderMarkdownReport,
   resolveStoragePaths,
   searchCatalog
 };
