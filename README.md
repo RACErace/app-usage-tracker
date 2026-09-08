@@ -67,7 +67,7 @@ It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker i
 | 7-day trends | Aggregates the last seven days and highlights weekly totals plus daily averages |
 | Timeline view | Replays one day's stored sessions with real start/end times, overlap lanes, and clickable detail entry points |
 | Item detail view | Displays today's hourly breakdown, recent-day history, metadata, and page breakdown where available |
-| Local CLI | Queries days, top items, timelines, searches, details, and full snapshots from local data |
+| Local CLI | Queries days, top items, timelines, searches, details, snapshots, and Markdown/CSV reports from local data |
 | AI skill files | Ships ready-to-use skills for Codex, OpenClaw, or similar assistants |
 
 ### Control and Reliability
@@ -76,7 +76,7 @@ It is not a screenshot recorder or a surveillance dashboard. App Usage Tracker i
 |-----------|---------------|
 | Custom service rules | Merges desktop apps and website domains into one logical service |
 | Category rules | Tags items as Work, Entertainment, Study, or Communication |
-| Visibility controls | Hides selected items from totals, rankings, timelines, searches, and snapshots |
+| Visibility controls | Hides selected items from totals, rankings, timelines, searches, snapshots, and reports |
 | Tracking protection | Supports manual pause, idle pause, and lock-screen pause |
 | Desktop behavior | Supports tray mode, auto-launch, close behavior, and light/dark/system themes |
 | Backup and recovery | Exports/imports JSON backups and can generate automatic local backups |
@@ -202,6 +202,8 @@ npm run query -- timeline --day latest --limit 20 --format json
 npm run query -- search --query "ChatGPT" --format json
 npm run query -- detail --key service:chatgpt --format json
 npm run query -- snapshot --format json
+npm run query -- report --days 7 --format markdown
+npm run query -- report --days 7 --format csv
 ```
 
 From an installed Windows build:
@@ -215,8 +217,9 @@ Notes:
 - The installer adds the app install directory to the current user's `PATH`
 - Reopen PowerShell, Command Prompt, or Windows Terminal if the shell was already open before installation
 - The installed wrapper is available at `%LOCALAPPDATA%\Programs\app-usage-tracker\app-usage-tracker-cli.cmd`
-- The CLI respects visibility settings from `settings.json`, so hidden items are excluded from totals, rankings, timelines, searches, and snapshots
+- The CLI respects visibility settings from `settings.json`, so hidden items are excluded from totals, rankings, timelines, searches, snapshots, and reports
 - `timeline` returns real stored sessions when available; older days collected before the session-detail upgrade may only expose aggregated totals
+- `report` aggregates the last N days (default 7) into a Markdown digest — daily totals, top items, activity split, categories, music playback, hourly activity, and insights — or a CSV export via `--format csv`
 - Prefer `--format json` for scripts, agents, and automation
 
 Supported data-location overrides:
