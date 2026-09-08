@@ -95,7 +95,7 @@ jobs:
           "skills_zip_path=dist/$skillsZipTarget" >> $env:GITHUB_OUTPUT
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: app-usage-tracker-${{ steps.version.outputs.version }}-windows
           path: |
@@ -106,6 +106,7 @@ jobs:
             dist/latest*.yml
             dist/builder-effective-config.yaml
           if-no-files-found: error
+          overwrite: true
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
