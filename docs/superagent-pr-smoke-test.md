@@ -23,3 +23,8 @@
 - 由本文档发起的测试 PR 保持草稿状态，仅用于人工检查提交与 PR 流程是否符合预期；不会启用自动合并，也不会由代理自行合并或关闭。
 
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+
+## PR 处理流程验证
+
+- 验证编号：`PR-BRANCH-UPDATE-20261101`
+- 本次修改提交到现有 PR 分支，PR 保持草稿，未合并到 main；Issue 直接提交 main 属于另一条处理流程。
